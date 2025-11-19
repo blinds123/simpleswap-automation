@@ -1,5 +1,5 @@
-# Use Apify's standard Python base image with Crawlee
-FROM apify/actor-python:3.11
+# Use Apify's Playwright Python base image
+FROM apify/actor-python-playwright:3.11
 
 # Copy requirements
 COPY requirements.txt ./
@@ -8,7 +8,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
-COPY main_puppeteer.py ./main.py
+COPY main.py ./
 
 # Run the actor
 CMD ["python3", "-u", "main.py"]
