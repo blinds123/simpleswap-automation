@@ -113,9 +113,20 @@ async def main() -> None:
                 """)
                 Actor.log.info(f"Address in field after JS: {current_value if current_value else 'EMPTY'}")
 
-                # Click away to trigger validation
-                Actor.log.info("Triggering validation...")
-                await page.click('body')
+                # Wait for autocomplete dropdown to appear
+                await page.wait_for_timeout(random.randint(1500, 2000))
+
+                # Click "Add a new address" to confirm the address
+                Actor.log.info("Clicking 'Add a new address' to confirm...")
+                try:
+                    await page.click('a:has-text("Add a new address"), button:has-text("Add a new address")', timeout=5000)
+                    Actor.log.info("Clicked 'Add a new address'")
+                except Exception as e:
+                    Actor.log.warning(f"Could not click 'Add a new address': {e}")
+                    # Try clicking away as fallback
+                    await page.click('body')
+
+                # Wait for validation to complete
                 await page.wait_for_timeout(random.randint(3000, 4000))
 
                 # Wait for button to be enabled
