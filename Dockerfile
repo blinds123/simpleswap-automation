@@ -1,5 +1,5 @@
-# Use Apify's Puppeteer Python base image (uses Crawlee)
-FROM apify/actor-python-puppeteer:3.11
+# Use Apify's standard Python base image with Crawlee
+FROM apify/actor-python:3.11
 
 # Copy requirements
 COPY requirements.txt ./
