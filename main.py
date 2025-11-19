@@ -77,12 +77,22 @@ async def main() -> None:
 
                 Actor.log.info("Entering wallet address...")
                 wallet_input = await page.query_selector('input[placeholder*="address" i]')
-                await wallet_input.fill(wallet_address)
+
+                # Type character by character to trigger proper events
+                await wallet_input.type(wallet_address, delay=random.randint(50, 100))
                 await page.wait_for_timeout(random.randint(1500, 2500))
 
-                # Press Tab to trigger validation
-                await page.keyboard.press('Tab')
-                await page.wait_for_timeout(random.randint(2000, 3000))
+                # Try clicking away to trigger blur
+                Actor.log.info("Triggering validation...")
+                await page.click('body')
+                await page.wait_for_timeout(2000)
+
+                # Check if address was accepted
+                current_value = await wallet_input.input_value()
+                Actor.log.info(f"Address in field: {current_value[:20]}...")
+
+                # Wait longer for validation
+                await page.wait_for_timeout(random.randint(3000, 4000))
 
                 # Wait for button to be enabled
                 Actor.log.info("Waiting for Create Exchange button...")
