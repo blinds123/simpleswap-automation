@@ -35,12 +35,12 @@
       "default": "pol-matic",
       "example": "pol-matic"
     },
-    "headless": {
-      "title": "Headless Mode",
+    "setup_mode": {
+      "title": "Setup Mode",
       "type": "boolean",
-      "description": "Run browser in headless mode",
+      "description": "Run in setup mode to manually add wallet address to SimpleSwap account (headful browser)",
       "editor": "checkbox",
-      "default": true
+      "default": false
     }
   },
   "required": ["wallet_address", "amount"]
