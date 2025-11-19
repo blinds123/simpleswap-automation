@@ -1,0 +1,32 @@
+{
+  "actorSpecification": 1,
+  "name": "simpleswap-automation",
+  "title": "SimpleSwap Exchange Automation",
+  "description": "Automated SimpleSwap exchange creation using Playwright with anti-detection",
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "dockerfile": "./Dockerfile",
+  "readme": "./README.md",
+  "input": "./input_schema.json",
+  "storages": {
+    "dataset": {
+      "actorSpecification": 1,
+      "title": "Exchange Results",
+      "views": {
+        "overview": {
+          "title": "Overview",
+          "transformation": {
+            "fields": [
+              "wallet_address",
+              "amount",
+              "exchange_id",
+              "exchange_url",
+              "status",
+              "created_at"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "title": "SimpleSwap Automation Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "wallet_address": {
+      "title": "Wallet Address",
+      "type": "string",
+      "description": "Polygon (MATIC) wallet address to receive crypto",
+      "editor": "textfield",
+      "example": "0x1372Ad41B513b9d6eC008086C03d69C635bAE578"
+    },
+    "amount": {
+      "title": "Amount (USD)",
+      "type": "number",
+      "description": "Amount in USD to exchange",
+      "editor": "number",
+      "default": 25,
+      "minimum": 25,
+      "maximum": 10000
+    },
+    "from_currency": {
+      "title": "From Currency",
+      "type": "string",
+      "description": "Currency to send",
+      "editor": "textfield",
+      "default": "usd-usd",
+      "example": "usd-usd"
+    },
+    "to_currency": {
+      "title": "To Currency",
+      "type": "string",
+      "description": "Currency to receive",
+      "editor": "textfield",
+      "default": "pol-matic",
+      "example": "pol-matic"
+    },
+    "headless": {
+      "title": "Headless Mode",
+      "type": "boolean",
+      "description": "Run browser in headless mode",
+      "editor": "checkbox",
+      "default": true
+    }
+  },
+  "required": ["wallet_address", "amount"]
+}
