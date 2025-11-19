@@ -194,22 +194,26 @@ class BrowserProfileManager:
 
 async def run_setup_mode(profile_manager, wallet_address, amount, from_currency, to_currency):
     """
-    Setup mode: Manually add wallet address to SimpleSwap account.
-    This runs with headful browsing and waits for user confirmation.
+    Setup mode: Try to create a browser profile with the wallet address.
+    Since Apify cloud doesn't support GUI browsers, we'll attempt an automated
+    approach and save the profile state regardless of outcome for manual testing.
     """
     Actor.log.info("="*60)
-    Actor.log.info("🔧 SETUP MODE - Adding Wallet Address")
+    Actor.log.info("🔧 SETUP MODE - Browser Profile Creation")
     Actor.log.info("="*60)
-    Actor.log.info(f"Wallet Address: {wallet_address}")
+    Actor.log.info(f"Wallet Address: {wallet_address[:10]}...")
     Actor.log.info(f"Amount: {amount} {from_currency.upper()} → {to_currency.upper()}")
     Actor.log.info("="*60)
 
     url = f"https://simpleswap.io/exchange?from={from_currency}&to={to_currency}&rate=floating&amount={amount}"
 
     async with async_playwright() as playwright:
-        # Launch browser with persistent context (HEADFUL for manual interaction)
+        # Note: In Apify cloud, headless must be True
+        # For local testing with GUI, set headless=False
+        headless_mode = Actor.configuration.headless if hasattr(Actor.configuration, 'headless') else True
+
         browser = await playwright.chromium.launch(
-            headless=False,  # Must be visible for manual setup
+            headless=headless_mode,
             args=[
                 '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
@@ -217,7 +221,7 @@ async def run_setup_mode(profile_manager, wallet_address, amount, from_currency,
             ]
         )
 
-        # Use user data directory for persistence
+        # Use persistent context
         user_data_dir = Actor.get_user_data_dir() or "/tmp/browser_profile"
         context = await browser.new_context(
             user_data_dir=user_data_dir,
@@ -239,61 +243,107 @@ async def run_setup_mode(profile_manager, wallet_address, amount, from_currency,
             Actor.log.info("🌐 Loading SimpleSwap page...")
             await page.goto(url, timeout=30000, wait_until="domcontentloaded")
 
-            Actor.log.info("="*60)
-            Actor.log.info("📋 MANUAL SETUP INSTRUCTIONS")
-            Actor.log.info("="*60)
-            Actor.log.info("1. Wait for the page to load completely")
-            Actor.log.info("2. Click on the wallet address field")
-            Actor.log.info(f"3. Type the wallet address: {wallet_address}")
-            Actor.log.info("4. Click 'Add a new address' in the dropdown")
-            Actor.log.info("5. Fill in the modal and click 'Add'")
-            Actor.log.info("6. Verify the address appears in the dropdown")
-            Actor.log.info("7. Close this browser window when done")
-            Actor.log.info("="*60)
+            # Human-like pause
+            await page.wait_for_timeout(random.randint(3000, 5000))
 
-            # Save the setup state for user
-            await Actor.set_value('SETUP_INSTRUCTIONS', {
-                "wallet_address": wallet_address,
-                "amount": amount,
-                "from_currency": from_currency,
-                "to_currency": to_currency,
-                "url": url,
-                "status": "waiting_for_manual_setup"
-            })
+            # Try to enter the wallet address (this might not work, but we'll try)
+            Actor.log.info("🔧 Attempting to enter wallet address...")
+            try:
+                # Find wallet input field
+                await page.wait_for_selector('input[placeholder*="address" i]', timeout=15000)
 
-            # Wait for browser to be closed (manual setup complete)
-            Actor.log.info("⏳ Waiting for manual setup to complete...")
-            Actor.log.info("   (Complete the steps in the browser, then close the window)")
+                # Click input field
+                await page.click('input[placeholder*="address" i]', timeout=5000)
+                await page.wait_for_timeout(1000)
 
-            # Keep the browser open until user manually closes it
-            await page.wait_for_timeout(300000)  # 5 minutes max wait time
+                # Type first few characters
+                await page.keyboard.type(wallet_address[:10], delay=random.randint(50, 100))
+                await page.wait_for_timeout(2000)
 
-            # Save profile after manual setup
-            Actor.log.info("💾 Saving browser profile...")
+                # Try to find "Add a new address" link
+                try:
+                    await page.click('text="Add a new address"', timeout=5000)
+                    await page.wait_for_timeout(2000)
+
+                    # Fill modal if it appears
+                    try:
+                        await page.fill('input[placeholder*="Wallet address" i]', wallet_address, timeout=3000)
+                        await page.wait_for_timeout(1000)
+
+                        # Fill label field
+                        await page.fill('input[placeholder*="Label" i]', 'My Polygon Wallet', timeout=3000)
+                        await page.wait_for_timeout(1000)
+
+                        # Click Add button
+                        await page.click('button:has-text("Add")', timeout=3000)
+                        Actor.log.info("✅ Attempted to add address to saved list")
+
+                    except Exception as modal_error:
+                        Actor.log.warning(f"⚠️ Could not complete modal: {modal_error}")
+
+                except Exception as add_link_error:
+                    Actor.log.warning(f"⚠️ Could not find 'Add a new address' link: {add_link_error}")
+
+            except Exception as input_error:
+                Actor.log.warning(f"⚠️ Could not interact with input field: {input_error}")
+
+            # Save whatever state we managed to create
+            Actor.log.info("💾 Saving browser profile state...")
             profile_saved = await profile_manager.save_profile(context)
 
-            if profile_saved:
+            # Take screenshot for debugging
+            try:
+                await page.evaluate('window.scrollTo(0, 0)')
+                await page.wait_for_timeout(500)
+                await page.screenshot(path='setup_attempt.png')
+                await Actor.set_value('setup_screenshot', await page.screenshot(), content_type='image/png')
+            except:
+                pass
+
+            if headless_mode:
+                # Cloud mode - provide instructions for local testing
                 result = {
-                    "status": "setup_completed",
+                    "status": "setup_info",
                     "wallet_address": wallet_address,
                     "amount": amount,
                     "from_currency": from_currency,
                     "to_currency": to_currency,
-                    "message": "Browser profile saved successfully. Ready for automation mode.",
+                    "message": "Setup mode attempted in headless environment. For full setup, run locally with headless=False.",
+                    "profile_saved": profile_saved is not None,
+                    "instructions": [
+                        "1. Run this actor locally with headless=False",
+                        "2. Or use the SimpleSwap website directly to add the wallet address",
+                        "3. Then run in automation mode"
+                    ],
                     "created_at": datetime.now().isoformat()
                 }
 
-                Actor.log.info("✅ Setup completed successfully!")
-                Actor.log.info("   Profile saved. You can now run in automation mode.")
+                Actor.log.info("ℹ️ Setup completed with limited success in headless mode")
+                Actor.log.info("   For full setup, run locally or add address manually")
             else:
-                result = {
-                    "status": "setup_failed",
-                    "error": "Failed to save browser profile",
-                    "wallet_address": wallet_address,
-                    "created_at": datetime.now().isoformat()
-                }
+                # Local GUI mode
+                if profile_saved:
+                    result = {
+                        "status": "setup_completed",
+                        "wallet_address": wallet_address,
+                        "amount": amount,
+                        "from_currency": from_currency,
+                        "to_currency": to_currency,
+                        "message": "Browser profile saved successfully. Ready for automation mode.",
+                        "created_at": datetime.now().isoformat()
+                    }
 
-                Actor.log.error("❌ Setup failed - could not save profile")
+                    Actor.log.info("✅ Setup completed successfully!")
+                    Actor.log.info("   Profile saved. You can now run in automation mode.")
+                else:
+                    result = {
+                        "status": "setup_failed",
+                        "error": "Failed to save browser profile",
+                        "wallet_address": wallet_address,
+                        "created_at": datetime.now().isoformat()
+                    }
+
+                    Actor.log.error("❌ Setup failed - could not save profile")
 
             await Actor.push_data(result)
             await Actor.set_value('OUTPUT', result)
