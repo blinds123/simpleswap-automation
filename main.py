@@ -71,27 +71,51 @@ async def main() -> None:
                 await page.mouse.wheel(0, random.randint(100, 300))
                 await page.wait_for_timeout(random.randint(1000, 2000))
 
-                # Find and fill wallet
+                # Find and fill wallet using JavaScript
                 Actor.log.info("Finding wallet address field...")
                 await page.wait_for_selector('input[placeholder*="address" i]', timeout=15000)
 
-                Actor.log.info("Entering wallet address...")
-                wallet_input = await page.query_selector('input[placeholder*="address" i]')
+                Actor.log.info("Entering wallet address with JavaScript...")
 
-                # Type character by character to trigger proper events
-                await wallet_input.type(wallet_address, delay=random.randint(50, 100))
-                await page.wait_for_timeout(random.randint(1500, 2500))
+                # Use JavaScript to set value and trigger all events
+                await page.evaluate(f"""
+                    (address) => {{
+                        const input = document.querySelector('input[placeholder*="address" i]');
+                        if (!input) throw new Error('Input not found');
 
-                # Try clicking away to trigger blur
+                        // Focus the input first
+                        input.focus();
+
+                        // Set the value directly
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(input, address);
+
+                        // Dispatch all necessary events
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                        input.dispatchEvent(new KeyboardEvent('keyup', {{ bubbles: true }}));
+                        input.dispatchEvent(new KeyboardEvent('keydown', {{ bubbles: true }}));
+
+                        console.log('Address set to:', input.value);
+                        return input.value;
+                    }}
+                """, wallet_address)
+
+                await page.wait_for_timeout(random.randint(2000, 3000))
+
+                # Verify the value was set
+                current_value = await page.evaluate("""
+                    () => {{
+                        const input = document.querySelector('input[placeholder*="address" i]');
+                        return input ? input.value : null;
+                    }}
+                """)
+                Actor.log.info(f"Address in field after JS: {current_value if current_value else 'EMPTY'}")
+
+                # Click away to trigger validation
                 Actor.log.info("Triggering validation...")
                 await page.click('body')
-                await page.wait_for_timeout(2000)
-
-                # Check if address was accepted
-                current_value = await wallet_input.input_value()
-                Actor.log.info(f"Address in field: {current_value[:20]}...")
-
-                # Wait longer for validation
                 await page.wait_for_timeout(random.randint(3000, 4000))
 
                 # Wait for button to be enabled
