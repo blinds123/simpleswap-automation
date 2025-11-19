@@ -98,12 +98,29 @@ async def main() -> None:
                 except:
                     Actor.log.warning("Button might still be disabled, trying anyway...")
 
+                # Take screenshot before clicking
+                await page.screenshot(path='before_click.png')
+                await Actor.set_value('before_click', await page.screenshot(), content_type='image/png')
+
                 # Click button
                 Actor.log.info("Clicking Create Exchange button...")
                 await page.click('button:has-text("Create an exchange")', force=True)
 
                 # Wait for response
                 await page.wait_for_timeout(5000)
+
+                # Take screenshot after clicking
+                await page.screenshot(path='after_click.png')
+                await Actor.set_value('after_click', await page.screenshot(), content_type='image/png')
+
+                # Check for error messages on page
+                error_messages = await page.locator('[role="alert"]').all_text_contents()
+                if error_messages:
+                    Actor.log.warning(f"Error messages on page: {error_messages}")
+
+                # Dump page HTML
+                page_html = await page.content()
+                await Actor.set_value('page_html', page_html)
 
                 # Check result
                 current_url = page.url
