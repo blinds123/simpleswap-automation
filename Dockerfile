@@ -1,14 +1,20 @@
-# Use Apify's Playwright Python base image
-FROM apify/actor-python-playwright:3.11
+# Use the official Apify image for Node.js actors (includes Playwright)
+FROM apify/actor-node:latest
 
-# Copy requirements
-COPY requirements.txt ./
+# Set working directory
+WORKDIR /app
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy package files
+COPY package*.json ./
 
-# Copy source code
-COPY main.py ./
+# Install dependencies
+RUN npm install --production
 
-# Run the actor
-CMD ["python3", "-u", "main.py"]
+# Copy application files
+COPY . .
+
+# Expose port (Render provides PORT env var)
+EXPOSE 3000
+
+# Start the server
+CMD ["node", "pool-server-production.js"]
