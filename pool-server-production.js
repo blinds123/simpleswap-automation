@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import puppeteer from 'puppeteer';
+import { chromium } from 'playwright';
 
 dotenv.config();
 
@@ -24,7 +24,7 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 }
 
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
-const BROWSER_WSE_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
+const CDP_ENDPOINT = `https://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
 // Middleware
 app.use(cors({
@@ -38,7 +38,7 @@ let exchangePool = [];
 let isReplenishing = false;
 
 /**
- * Creates a SimpleSwap exchange using Puppeteer + BrightData
+ * Creates a SimpleSwap exchange using Playwright + BrightData (FIXED)
  */
 async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
     console.log(`[${new Date().toISOString()}] Creating exchange for $${amountUSD}...`);
@@ -47,36 +47,79 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
     let browser;
     try {
-        browser = await puppeteer.connect({
-            browserWSEndpoint: BROWSER_WSE_ENDPOINT,
-        });
-        const page = await browser.newPage();
+        browser = await chromium.connectOverCDP(CDP_ENDPOINT);
+        const context = browser.contexts()[0];
+        const page = context.pages()[0] || await context.newPage();
         console.log(`[${new Date().toISOString()}] Connected to BrightData Scraping Browser`);
 
-        await page.goto(url, { timeout: 120000, waitUntil: "networkidle2" });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(2000);
         console.log(`[${new Date().toISOString()}] Page loaded`);
 
-        // Wait for address input field and type with delay
+        // COMPREHENSIVE FIX: Multiple approaches to trigger validation
         const addressInputSelector = 'input[placeholder*="address" i]';
-        await page.waitForSelector(addressInputSelector, { timeout: 20000 });
+        const addressInput = page.locator(addressInputSelector);
+        await addressInput.waitFor({ timeout: 20000 });
 
-        // Type address character by character with delay
-        await page.type(addressInputSelector, walletAddress, { delay: 110 });
-        console.log(`[${new Date().toISOString()}] Typed wallet address`);
+        // Approach 1: Native Playwright typing (fires all keyboard events)
+        await addressInput.focus();
+        await page.waitForTimeout(500);
+        await addressInput.pressSequentially(walletAddress, { delay: 100 });
+        await page.waitForTimeout(500);
 
-        // Wait for "Create an exchange" button to be enabled
+        // Approach 2: Force blur event (triggers validation in most forms)
+        await addressInput.blur();
+        await page.waitForTimeout(500);
+
+        // Approach 3: Dispatch all possible events manually
+        await page.evaluate((selector, value) => {
+            const input = document.querySelector(selector);
+            if (input) {
+                // Trigger React/Vue change detection
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype,
+                    'value'
+                ).set;
+                nativeInputValueSetter.call(input, value);
+
+                // Fire all validation events
+                const events = ['input', 'change', 'blur', 'keyup', 'keydown'];
+                events.forEach(eventType => {
+                    input.dispatchEvent(new Event(eventType, { bubbles: true }));
+                });
+            }
+        }, addressInputSelector, walletAddress);
+
+        console.log(`[${new Date().toISOString()}] Filled wallet address with comprehensive event triggers`);
+
+        // Wait for button with multiple checks and retries
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
-        await page.waitForFunction(
-            (selector) => {
+        let buttonEnabled = false;
+        for (let attempt = 1; attempt <= 5; attempt++) {
+            buttonEnabled = await page.evaluate((selector) => {
                 const btn = document.querySelector(selector);
                 return btn && !btn.disabled;
-            },
-            { timeout: 20000 }
-        );
-        console.log(`[${new Date().toISOString()}] Create button is enabled`);
+            }, createButtonSelector);
+
+            if (buttonEnabled) {
+                console.log(`[${new Date().toISOString()}] Button enabled on attempt ${attempt}`);
+                break;
+            }
+
+            console.log(`[${new Date().toISOString()}] Button still disabled, attempt ${attempt}/5, waiting...`);
+            await page.waitForTimeout(2000);
+
+            // Re-trigger events on each retry
+            await addressInput.focus();
+            await addressInput.blur();
+        }
+
+        if (!buttonEnabled) {
+            throw new Error('Button remained disabled after 5 attempts with comprehensive event triggering');
+        }
 
         await page.click(createButtonSelector);
-        await page.waitForNavigation({ timeout: 45000, waitUntil: 'networkidle2' });
+        await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
 
         const exchangeUrl = page.url();
         const exchangeId = new URL(exchangeUrl).searchParams.get('id');
