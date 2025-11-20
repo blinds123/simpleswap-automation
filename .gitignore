@@ -29,3 +29,6 @@ Thumbs.db
 # Secrets
 .env
 *.key
+
+# Browser Profile for Automation
+simpleswap-profile/

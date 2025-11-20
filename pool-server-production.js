@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import puppeteer from 'puppeteer';
+import { chromium } from 'playwright';
 
 dotenv.config();
 
@@ -24,7 +24,7 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 }
 
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
-const BROWSER_WSE_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
+const CDP_ENDPOINT = `https://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
 // Middleware
 app.use(cors({
@@ -38,7 +38,7 @@ let exchangePool = [];
 let isReplenishing = false;
 
 /**
- * Creates a SimpleSwap exchange using Puppeteer + BrightData
+ * Creates a SimpleSwap exchange using Playwright + BrightData
  */
 async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
     console.log(`[${new Date().toISOString()}] Creating exchange for $${amountUSD}...`);
@@ -47,35 +47,48 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
     let browser;
     try {
-        browser = await puppeteer.connect({
-            browserWSEndpoint: BROWSER_WSE_ENDPOINT,
-        });
-
-        const page = await browser.newPage();
+        browser = await chromium.connectOverCDP(CDP_ENDPOINT);
+        const context = browser.contexts()[0];
+        const page = context.pages()[0] || await context.newPage();
         console.log(`[${new Date().toISOString()}] Connected to BrightData Scraping Browser`);
 
-        await page.goto(url, { timeout: 120000, waitUntil: 'networkidle2' });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(2000);
         console.log(`[${new Date().toISOString()}] Page loaded`);
 
         // Wait for address input field
         const addressInputSelector = 'input[placeholder*="address" i]';
         await page.waitForSelector(addressInputSelector, { timeout: 20000 });
 
-        // Type address with delay to trigger form validation
-        await page.type(addressInputSelector, walletAddress, { delay: 110 });
-        console.log(`[${new Date().toISOString()}] Typed wallet address`);
+        // Use JavaScript to fill the input field and trigger all necessary events
+        await page.evaluate((selector, value) => {
+            const input = document.querySelector(selector);
+            if (input) {
+                input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+        }, addressInputSelector, walletAddress);
 
-        // Wait for "Create an exchange" button
+        console.log(`[${new Date().toISOString()}] Filled wallet address via JavaScript`);
+
+        // Wait longer for validation to complete
+        await page.waitForTimeout(1500);
+
+        // Wait for "Create an exchange" button to be enabled
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
         await page.waitForFunction(
-            (selector) => document.querySelector(selector) && !document.querySelector(selector).disabled,
-            { timeout: 20000 },
-            createButtonSelector
+            (selector) => {
+                const btn = document.querySelector(selector);
+                return btn && !btn.disabled;
+            },
+            { timeout: 20000 }
         );
         console.log(`[${new Date().toISOString()}] Create button is enabled`);
 
         await page.click(createButtonSelector);
-        await page.waitForNavigation({ timeout: 45000, waitUntil: 'networkidle2' });
+        await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
 
         const exchangeUrl = page.url();
         const exchangeId = new URL(exchangeUrl).searchParams.get('id');

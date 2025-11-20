@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buy Product - Your Store</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .product-card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .product-image {
+            width: 100%;
+            height: 300px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .price {
+            font-size: 36px;
+            color: #667eea;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+
+        .description {
+            color: #666;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+
+        .buy-button {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .buy-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.5);
+        }
+
+        .buy-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .payment-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .loading {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: #d1ecf1;
+            border-radius: 8px;
+            color: #0c5460;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(0, 0, 0, 0.1);
+            border-top-color: #0c5460;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8d7da;
+            border-radius: 8px;
+            color: #721c24;
+        }
+
+        .error.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="product-card">
+        <div class="product-image">
+            🎁
+        </div>
+
+        <h1>Premium Product</h1>
+        <div class="price">$25.00</div>
+        <p class="description">
+            High-quality product delivered instantly. Pay securely with cryptocurrency via SimpleSwap.
+        </p>
+
+        <button id="buyButton" class="buy-button" onclick="handlePurchase()">
+            Buy Now - $25
+        </button>
+
+        <div class="payment-info">
+            💳 Secure payment via SimpleSwap<br>
+            🔄 Instant redirect to payment page<br>
+            ⚡ Powered by automated exchange creation
+        </div>
+
+        <div id="loading" class="loading">
+            <span class="spinner"></span>
+            <strong>Processing your order...</strong><br>
+            Preparing your secure payment link...
+        </div>
+
+        <div id="error" class="error">
+            <strong>⚠️ Error</strong><br>
+            <span id="errorMessage"></span><br>
+            <button onclick="location.reload()" style="margin-top: 10px; padding: 8px 16px; background: #721c24; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                Try Again
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ⚠️ IMPORTANT: Replace this with your Railway/Render backend URL
+        const BACKEND_URL = 'https://your-backend.railway.app';
+
+        async function handlePurchase() {
+            const buyButton = document.getElementById('buyButton');
+            const loadingDiv = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const errorMessage = document.getElementById('errorMessage');
+
+            // Reset states
+            loadingDiv.classList.remove('show');
+            errorDiv.classList.remove('show');
+
+            // Disable button and show loading
+            buyButton.disabled = true;
+            buyButton.textContent = 'Processing...';
+            loadingDiv.classList.add('show');
+
+            try {
+                console.log('Requesting exchange from pool...');
+
+                // Call your backend to get pre-made exchange
+                const response = await fetch(`${BACKEND_URL}/get-exchange`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success && data.exchangeUrl) {
+                    console.log('Exchange received:', data.exchangeId);
+                    console.log('Redirecting to:', data.exchangeUrl);
+
+                    // Show success message briefly
+                    loadingDiv.innerHTML = `
+                        <strong>✅ Success!</strong><br>
+                        Redirecting to payment page...
+                    `;
+
+                    // Redirect to SimpleSwap exchange (instant!)
+                    setTimeout(() => {
+                        window.location.href = data.exchangeUrl;
+                    }, 1000);
+
+                } else {
+                    throw new Error(data.error || 'Failed to create exchange');
+                }
+
+            } catch (error) {
+                console.error('Purchase error:', error);
+
+                // Show error
+                loadingDiv.classList.remove('show');
+                errorDiv.classList.add('show');
+                errorMessage.textContent = error.message || 'Something went wrong. Please try again.';
+
+                // Re-enable button
+                buyButton.disabled = false;
+                buyButton.textContent = 'Buy Now - $25';
+            }
+        }
+
+        // Optional: Check backend health on page load
+        async function checkBackendHealth() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/health`);
+                const data = await response.json();
+
+                if (data.status === 'ok') {
+                    console.log('✅ Backend is healthy');
+                    console.log('Pool status:', data.pool);
+                } else {
+                    console.warn('⚠️ Backend health check failed');
+                }
+            } catch (error) {
+                console.error('❌ Backend is unreachable:', error);
+                // You could show a warning to the user here
+            }
+        }
+
+        // Run health check when page loads
+        checkBackendHealth();
+    </script>
+</body>
+</html>

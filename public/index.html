@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SimpleSwap Automation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .result.loading {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+
+        .result-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .exchange-link {
+            color: #004085;
+            word-break: break-all;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .exchange-link:hover {
+            text-decoration: underline;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(0, 0, 0, 0.1);
+            border-top-color: #0c5460;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .info-box {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #555;
+        }
+
+        .api-info {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .api-info h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .endpoint {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 SimpleSwap Automation</h1>
+        <p class="subtitle">Create cryptocurrency exchanges automatically</p>
+
+        <div class="info-box">
+            <strong>Default Settings:</strong><br>
+            From: USD • To: Polygon (MATIC) • Rate: Floating
+        </div>
+
+        <form id="exchangeForm">
+            <div class="form-group">
+                <label for="wallet">Polygon Wallet Address *</label>
+                <input
+                    type="text"
+                    id="wallet"
+                    name="wallet"
+                    placeholder="0x1372Ad41B513b9d6eC008086C03d69C635bAE578"
+                    pattern="^0x[a-fA-F0-9]{40}$"
+                    required
+                />
+            </div>
+
+            <div class="form-group">
+                <label for="amount">Amount (USD)</label>
+                <input
+                    type="number"
+                    id="amount"
+                    name="amount"
+                    placeholder="25"
+                    min="1"
+                    step="0.01"
+                    value="25"
+                />
+            </div>
+
+            <button type="submit" id="submitBtn">Create Exchange</button>
+        </form>
+
+        <div id="result" class="result"></div>
+
+        <div class="api-info">
+            <h3>API Usage</h3>
+            <p style="margin-bottom: 10px; color: #666; font-size: 13px;">Programmatic access via HTTP:</p>
+            <div class="endpoint">
+                GET /create-exchange?wallet=0x...&amount=25
+            </div>
+            <div class="endpoint">
+                POST /create-exchange<br>
+                {"wallet": "0x...", "amount": 25}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('exchangeForm');
+        const resultDiv = document.getElementById('result');
+        const submitBtn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const wallet = document.getElementById('wallet').value;
+            const amount = document.getElementById('amount').value || 25;
+
+            // Show loading state
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating Exchange...';
+            resultDiv.className = 'result loading';
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `
+                <div class="result-title"><span class="spinner"></span> Creating exchange...</div>
+                <p>This may take 30-60 seconds. Please wait...</p>
+            `;
+
+            try {
+                const response = await fetch(`/create-exchange?wallet=${encodeURIComponent(wallet)}&amount=${amount}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <div class="result-title">✅ Exchange Created Successfully!</div>
+                        <p><strong>Exchange ID:</strong> ${data.exchangeId}</p>
+                        <p><strong>Exchange URL:</strong></p>
+                        <a href="${data.exchangeUrl}" target="_blank" class="exchange-link">${data.exchangeUrl}</a>
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `
+                        <div class="result-title">❌ Error</div>
+                        <p>${data.error}</p>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <div class="result-title">❌ Network Error</div>
+                    <p>${error.message}</p>
+                `;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Exchange';
+            }
+        });
+    </script>
+</body>
+</html>
