@@ -50,7 +50,9 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         const page = context.pages()[0] || await context.newPage();
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForLoadState('networkidle', { timeout: 30000 });
+
+        // Wait a bit for dynamic content to render
+        await page.waitForTimeout(2000);
 
         // Find and fill wallet address input
         const input = page.getByLabel(/address/i).or(
