@@ -109,7 +109,7 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         await page.waitForTimeout(500);
 
         // Approach 3: Dispatch all possible events manually
-        await page.evaluate((selector, value) => {
+        await page.evaluate(({selector, value}) => {
             const input = document.querySelector(selector);
             if (input) {
                 // Trigger React/Vue change detection
@@ -125,7 +125,7 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
                     input.dispatchEvent(new Event(eventType, { bubbles: true }));
                 });
             }
-        }, addressInputSelector, walletAddress);
+        }, {selector: addressInputSelector, value: walletAddress});
 
         console.log(`[${new Date().toISOString()}] Completed address input with all event triggers`);
 
