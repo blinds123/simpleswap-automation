@@ -38,7 +38,7 @@ let exchangePool = [];
 let isReplenishing = false;
 
 /**
- * Creates a SimpleSwap exchange using Playwright + BrightData
+ * Creates a SimpleSwap exchange using Puppeteer + BrightData
  */
 async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
     console.log(`[${new Date().toISOString()}] Creating exchange for $${amountUSD}...`);
