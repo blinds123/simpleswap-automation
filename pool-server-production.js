@@ -303,7 +303,7 @@ app.get('/stats', (req, res) => {
 // ============================================
 
 app.listen(PORT, async () => {
-    console.log(`\n🚀 SimpleSwap Pool Server`);
+    console.log(`\n🚀 SimpleSwap Pool Server v3.1.0 (Playwright .fill() fix)`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
     console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})\n`);
