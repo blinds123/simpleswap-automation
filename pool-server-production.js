@@ -66,12 +66,8 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         // Wait for button to be enabled
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
         await page.waitForFunction(
-            (selector) => {
-                const btn = document.querySelector(selector);
-                return btn && !btn.disabled;
-            },
-            { timeout: 20000 },
-            createButtonSelector
+            `document.querySelector('${createButtonSelector}') && !document.querySelector('${createButtonSelector}').disabled`,
+            { timeout: 20000 }
         );
         console.log(`[${new Date().toISOString()}] Button enabled`);
 
