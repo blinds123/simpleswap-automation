@@ -56,80 +56,40 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         await page.waitForTimeout(2000);
         console.log(`[${new Date().toISOString()}] Page loaded`);
 
-        // FIXED: Use native Playwright .fill() which properly triggers React validation
+        // Use simplified approach: fill + blur to trigger React validation
         const addressInputSelector = 'input[placeholder*="address" i]';
-        const addressInput = page.locator(addressInputSelector);
-        await addressInput.waitFor({ timeout: 20000 });
+        await page.waitForSelector(addressInputSelector, { timeout: 20000 });
 
-        // Use .fill() - fires all proper events for React form validation
-        await addressInput.fill(walletAddress);
-        console.log(`[${new Date().toISOString()}] Filled wallet address using native Playwright method`);
+        // Clear and type address
+        await page.click(addressInputSelector, { clickCount: 3 }); // Select all
+        await page.type(addressInputSelector, walletAddress, { delay: 50 });
+        console.log(`[${new Date().toISOString()}] Typed wallet address`);
 
-        await page.waitForTimeout(1000);
-
-        // CRITICAL: Wait for and handle autocomplete dropdown
-        try {
-            // Look for autocomplete dropdown options (might be "Add a new address" or the address itself)
-            const autocompleteSelectors = [
-                'div[role="option"]',  // Common autocomplete option
-                'li[role="option"]',   // Alternative autocomplete option
-                '[class*="autocomplete"] div',  // Generic autocomplete div
-                '[class*="dropdown"] div:has-text("address")',  // Dropdown with "address" text
-                'button:has-text("Add")'  // "Add a new address" button
-            ];
-
-            let autocompleteClicked = false;
-            for (const selector of autocompleteSelectors) {
-                try {
-                    const option = page.locator(selector).first();
-                    await option.waitFor({ state: 'visible', timeout: 3000 });
-                    await option.click();
-                    console.log(`[${new Date().toISOString()}] Clicked autocomplete option: ${selector}`);
-                    autocompleteClicked = true;
-                    break;
-                } catch (e) {
-                    // Try next selector
-                    continue;
-                }
+        // Trigger blur to activate React validation
+        await page.evaluate(() => {
+            const input = document.querySelector('input[placeholder*="address" i]');
+            if (input) {
+                input.blur();
+                input.dispatchEvent(new Event('blur', { bubbles: true }));
             }
+        });
 
-            if (!autocompleteClicked) {
-                console.log(`[${new Date().toISOString()}] No autocomplete found, continuing...`);
-            }
-        } catch (e) {
-            console.log(`[${new Date().toISOString()}] Autocomplete handling error: ${e.message}`);
-        }
+        await page.waitForTimeout(2000); // Wait for React to process validation
 
-        await page.waitForTimeout(500);
-
-        console.log(`[${new Date().toISOString()}] Completed address input with native fill method`);
-
-        // Wait for button with multiple checks and retries
+        // Wait for button to be enabled
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
-        let buttonEnabled = false;
-        for (let attempt = 1; attempt <= 5; attempt++) {
-            buttonEnabled = await page.evaluate((selector) => {
+
+        // Wait with timeout for button to be enabled
+        await page.waitForFunction(
+            (selector) => {
                 const btn = document.querySelector(selector);
                 return btn && !btn.disabled;
-            }, createButtonSelector);
+            },
+            { timeout: 10000 },
+            createButtonSelector
+        );
 
-            if (buttonEnabled) {
-                console.log(`[${new Date().toISOString()}] Button enabled on attempt ${attempt}`);
-                break;
-            }
-
-            console.log(`[${new Date().toISOString()}] Button still disabled, attempt ${attempt}/5, waiting...`);
-            await page.waitForTimeout(2000);
-
-            // Re-trigger events on each retry
-            await addressInput.focus();
-            await addressInput.blur();
-        }
-
-        if (!buttonEnabled) {
-            throw new Error('Button remained disabled after 5 attempts with comprehensive event triggering');
-        }
-
+        console.log(`[${new Date().toISOString()}] Button enabled, clicking...`);
         await page.click(createButtonSelector);
         await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
 
