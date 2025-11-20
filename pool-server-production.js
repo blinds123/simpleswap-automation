@@ -262,19 +262,17 @@ app.get('/stats', (req, res) => {
 // SERVER STARTUP
 // ============================================
 
-app.listen(PORT, async () => {
-    console.log(`\n🚀 SimpleSwap Pool Server v3.1.0 (Playwright .fill() fix)`);
+app.listen(PORT, () => {
+    console.log(`\n🚀 SimpleSwap Pool Server v3.2.0 (Async pool initialization)`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
-    console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})\n`);
+    console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})`);
+    console.log(`\n✅ Server started! Initializing pool in background...\n`);
 
-    try {
-        await initializePool();
-        console.log(`✅ Server ready!\n`);
-    } catch (error) {
-        console.error('❌ Pool init failed:', error);
-        process.exit(1);
-    }
+    // Initialize pool in background (don't block server startup)
+    initializePool()
+        .then(() => console.log('✅ Pool initialization complete!\n'))
+        .catch(error => console.error('❌ Pool init error:', error.message));
 });
 
 process.on('SIGTERM', () => {
