@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: simpleswap-pool-server
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install
+    startCommand: node pool-server-production.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BRIGHTDATA_CUSTOMER_ID
+        sync: false
+      - key: BRIGHTDATA_ZONE
+        sync: false
+      - key: BRIGHTDATA_PASSWORD
+        sync: false
+      - key: MERCHANT_WALLET
+        value: 0x1372Ad41B513b9d6eC008086C03d69C635bAE578
+      - key: POOL_SIZE
+        value: 10
+      - key: MIN_POOL_SIZE
+        value: 5
+      - key: FRONTEND_URL
+        value: https://beigesneaker.netlify.app
+    healthCheckPath: /health
