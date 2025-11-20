@@ -1,5 +1,5 @@
-# Use the official Apify image for Node.js actors (includes Playwright)
-FROM apify/actor-node:latest
+# Use official Microsoft Playwright image (includes Node.js + Playwright + all browsers)
+FROM mcr.microsoft.com/playwright:v1.40.0-focal
 
 # Set working directory
 WORKDIR /app
@@ -7,7 +7,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install dependencies (Playwright is already in the base image)
 RUN npm install --production
 
 # Copy application files
