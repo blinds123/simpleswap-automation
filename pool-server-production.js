@@ -61,19 +61,20 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
         // Wait for "Create an exchange" button to be enabled
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
-        await page.waitForFunction(
-            (selector) => {
-                const btn = document.querySelector(selector);
-                return btn && !btn.disabled;
-            },
-            { timeout: 20000 },
-            createButtonSelector
-        );
+        await page.waitForSelector(createButtonSelector, { state: 'visible', timeout: 20000 });
+
+        // Wait for button to be enabled (not disabled)
+        await page.waitForFunction(() => {
+            const btn = document.querySelector('button[data-testid="create-exchange-button"]');
+            return btn && !btn.disabled;
+        }, { timeout: 20000 });
         console.log(`[${new Date().toISOString()}] Create button is enabled`);
 
         // Click the button and wait for navigation
-        await page.click(createButtonSelector);
-        await page.waitForNavigation({ timeout: 45000, waitUntil: 'load' });
+        await Promise.all([
+            page.waitForNavigation({ timeout: 45000, waitUntil: 'load' }),
+            page.click(createButtonSelector)
+        ]);
 
         const exchangeUrl = page.url();
         const exchangeId = new URL(exchangeUrl).searchParams.get('id');
