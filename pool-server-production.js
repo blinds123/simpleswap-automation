@@ -10,8 +10,8 @@ const PORT = process.env.PORT || 3000;
 
 // Configuration
 const MERCHANT_WALLET = process.env.MERCHANT_WALLET || "0x1372Ad41B513b9d6eC008086C03d69C635bAE578";
-const POOL_SIZE = parseInt(process.env.POOL_SIZE) || 5;
-const MIN_POOL_SIZE = parseInt(process.env.MIN_POOL_SIZE) || 3;
+const POOL_SIZE = parseInt(process.env.POOL_SIZE) || 10;
+const MIN_POOL_SIZE = parseInt(process.env.MIN_POOL_SIZE) || 5;
 const PRODUCT_PRICE_USD = parseInt(process.env.PRODUCT_PRICE_USD) || 25; // Product price
 
 // BrightData credentials
