@@ -258,12 +258,46 @@ app.get('/stats', (req, res) => {
     });
 });
 
+/**
+ * POST /admin/init-pool - Manual pool initialization trigger
+ */
+app.post('/admin/init-pool', async (req, res) => {
+    try {
+        if (isReplenishing) {
+            return res.json({ success: false, error: 'Pool is already initializing' });
+        }
+
+        if (exchangePool.length >= POOL_SIZE) {
+            return res.json({
+                success: false,
+                error: 'Pool is already full',
+                poolSize: exchangePool.length
+            });
+        }
+
+        console.log('\n🔧 Manual pool initialization triggered...\n');
+
+        // Clear existing pool and reinitialize
+        exchangePool.length = 0;
+        await initializePool();
+
+        res.json({
+            success: true,
+            poolSize: exchangePool.length,
+            message: `Pool initialized with ${exchangePool.length} exchanges`
+        });
+    } catch (error) {
+        console.error('❌ Manual init failed:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ============================================
 // SERVER STARTUP
 // ============================================
 
 app.listen(PORT, () => {
-    console.log(`\n🚀 SimpleSwap Pool Server v3.2.0 (Async pool initialization)`);
+    console.log(`\n🚀 SimpleSwap Pool Server v3.2.1 (Async pool initialization - deployment test)`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
     console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})`);
