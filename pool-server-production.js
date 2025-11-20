@@ -65,6 +65,43 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         await addressInput.focus();
         await page.waitForTimeout(500);
         await addressInput.pressSequentially(walletAddress, { delay: 100 });
+        await page.waitForTimeout(1000);
+
+        console.log(`[${new Date().toISOString()}] Typed wallet address, waiting for autocomplete...`);
+
+        // CRITICAL: Wait for and handle autocomplete dropdown
+        try {
+            // Look for autocomplete dropdown options (might be "Add a new address" or the address itself)
+            const autocompleteSelectors = [
+                'div[role="option"]',  // Common autocomplete option
+                'li[role="option"]',   // Alternative autocomplete option
+                '[class*="autocomplete"] div',  // Generic autocomplete div
+                '[class*="dropdown"] div:has-text("address")',  // Dropdown with "address" text
+                'button:has-text("Add")'  // "Add a new address" button
+            ];
+
+            let autocompleteClicked = false;
+            for (const selector of autocompleteSelectors) {
+                try {
+                    const option = page.locator(selector).first();
+                    await option.waitFor({ state: 'visible', timeout: 3000 });
+                    await option.click();
+                    console.log(`[${new Date().toISOString()}] Clicked autocomplete option: ${selector}`);
+                    autocompleteClicked = true;
+                    break;
+                } catch (e) {
+                    // Try next selector
+                    continue;
+                }
+            }
+
+            if (!autocompleteClicked) {
+                console.log(`[${new Date().toISOString()}] No autocomplete found, continuing...`);
+            }
+        } catch (e) {
+            console.log(`[${new Date().toISOString()}] Autocomplete handling error: ${e.message}`);
+        }
+
         await page.waitForTimeout(500);
 
         // Approach 2: Force blur event (triggers validation in most forms)
@@ -90,7 +127,7 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
             }
         }, addressInputSelector, walletAddress);
 
-        console.log(`[${new Date().toISOString()}] Filled wallet address with comprehensive event triggers`);
+        console.log(`[${new Date().toISOString()}] Completed address input with all event triggers`);
 
         // Wait for button with multiple checks and retries
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
