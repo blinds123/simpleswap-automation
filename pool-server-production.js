@@ -56,18 +56,16 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         await page.waitForTimeout(2000);
         console.log(`[${new Date().toISOString()}] Page loaded`);
 
-        // COMPREHENSIVE FIX: Multiple approaches to trigger validation
+        // FIXED: Use native Playwright .fill() which properly triggers React validation
         const addressInputSelector = 'input[placeholder*="address" i]';
         const addressInput = page.locator(addressInputSelector);
         await addressInput.waitFor({ timeout: 20000 });
 
-        // Approach 1: Native Playwright typing (fires all keyboard events)
-        await addressInput.focus();
-        await page.waitForTimeout(500);
-        await addressInput.pressSequentially(walletAddress, { delay: 100 });
-        await page.waitForTimeout(1000);
+        // Use .fill() - fires all proper events for React form validation
+        await addressInput.fill(walletAddress);
+        console.log(`[${new Date().toISOString()}] Filled wallet address using native Playwright method`);
 
-        console.log(`[${new Date().toISOString()}] Typed wallet address, waiting for autocomplete...`);
+        await page.waitForTimeout(1000);
 
         // CRITICAL: Wait for and handle autocomplete dropdown
         try {
@@ -104,30 +102,7 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
         await page.waitForTimeout(500);
 
-        // Approach 2: Force blur event (triggers validation in most forms)
-        await addressInput.blur();
-        await page.waitForTimeout(500);
-
-        // Approach 3: Dispatch all possible events manually
-        await page.evaluate(({selector, value}) => {
-            const input = document.querySelector(selector);
-            if (input) {
-                // Trigger React/Vue change detection
-                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                    window.HTMLInputElement.prototype,
-                    'value'
-                ).set;
-                nativeInputValueSetter.call(input, value);
-
-                // Fire all validation events
-                const events = ['input', 'change', 'blur', 'keyup', 'keydown'];
-                events.forEach(eventType => {
-                    input.dispatchEvent(new Event(eventType, { bubbles: true }));
-                });
-            }
-        }, {selector: addressInputSelector, value: walletAddress});
-
-        console.log(`[${new Date().toISOString()}] Completed address input with all event triggers`);
+        console.log(`[${new Date().toISOString()}] Completed address input with native fill method`);
 
         // Wait for button with multiple checks and retries
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
