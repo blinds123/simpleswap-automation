@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { chromium } from 'playwright';
+import puppeteer from 'puppeteer';
 
 dotenv.config();
 
@@ -23,7 +23,8 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
     throw new Error('Missing BrightData credentials in environment variables');
 }
 
-const CDP_ENDPOINT = `wss://brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
+const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
+const BROWSER_WSE_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
 // Middleware
 app.use(cors({
@@ -37,19 +38,24 @@ let exchangePool = [];
 let isReplenishing = false;
 
 /**
- * Creates a SimpleSwap exchange using Playwright + BrightData
+ * Creates a SimpleSwap exchange using Puppeteer + BrightData
  */
 async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
     console.log(`[${new Date().toISOString()}] Creating exchange for $${amountUSD}...`);
 
     const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
-    const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
 
+    let browser;
     try {
-        const context = browser.contexts()[0];
-        const page = context.pages()[0] || await context.newPage();
+        browser = await puppeteer.connect({
+            browserWSEndpoint: BROWSER_WSE_ENDPOINT,
+        });
 
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        const page = await browser.newPage();
+        console.log(`[${new Date().toISOString()}] Connected to BrightData Scraping Browser`);
+
+        await page.goto(url, { timeout: 120000, waitUntil: 'networkidle2' });
+        console.log(`[${new Date().toISOString()}] Page loaded`);
 
         // Wait for address input field
         const addressInputSelector = 'input[placeholder*="address" i]';
@@ -61,20 +67,15 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
         // Wait for "Create an exchange" button
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
+        await page.waitForFunction(
+            (selector) => document.querySelector(selector) && !document.querySelector(selector).disabled,
+            { timeout: 20000 },
+            createButtonSelector
+        );
+        console.log(`[${new Date().toISOString()}] Create button is enabled`);
 
-        // Wait for button to appear and be visible
-        await page.waitForSelector(createButtonSelector, { state: 'visible', timeout: 30000 });
-        console.log(`[${new Date().toISOString()}] Create button visible`);
-
-        // Wait a bit for button to be enabled (form validation)
-        await page.waitForTimeout(3000);
-
-        // Click the button and wait for navigation
-        await Promise.all([
-            page.waitForNavigation({ timeout: 60000, waitUntil: 'load' }),
-            page.click(createButtonSelector)
-        ]);
-        console.log(`[${new Date().toISOString()}] Navigation completed`);
+        await page.click(createButtonSelector);
+        await page.waitForNavigation({ timeout: 45000, waitUntil: 'networkidle2' });
 
         const exchangeUrl = page.url();
         const exchangeId = new URL(exchangeUrl).searchParams.get('id');
@@ -96,7 +97,9 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         console.error(`[${new Date().toISOString()}] ✗ Failed:`, error.message);
         throw error;
     } finally {
-        await browser.close();
+        if (browser) {
+            await browser.close();
+        }
     }
 }
 
