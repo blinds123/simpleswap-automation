@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { chromium } from 'playwright';
+import puppeteer from 'puppeteer';
 
 dotenv.config();
 
@@ -24,7 +24,7 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 }
 
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
-const CDP_ENDPOINT = `https://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
+const BROWSER_WSE_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
 // Middleware
 app.use(cors({
@@ -47,22 +47,21 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
     let browser;
     try {
-        browser = await chromium.connectOverCDP(CDP_ENDPOINT);
-        const context = browser.contexts()[0];
-        const page = context.pages()[0] || await context.newPage();
+        browser = await puppeteer.connect({
+            browserWSEndpoint: BROWSER_WSE_ENDPOINT,
+        });
+        const page = await browser.newPage();
         console.log(`[${new Date().toISOString()}] Connected to BrightData Scraping Browser`);
 
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForTimeout(2000);
+        await page.goto(url, { timeout: 120000, waitUntil: "networkidle2" });
         console.log(`[${new Date().toISOString()}] Page loaded`);
 
         // Wait for address input field and type with delay
         const addressInputSelector = 'input[placeholder*="address" i]';
-        const addressInput = page.locator(addressInputSelector);
-        await addressInput.waitFor({ timeout: 20000 });
+        await page.waitForSelector(addressInputSelector, { timeout: 20000 });
 
-        // Type address character by character with delay (like Puppeteer page.type)
-        await addressInput.pressSequentially(walletAddress, { delay: 110 });
+        // Type address character by character with delay
+        await page.type(addressInputSelector, walletAddress, { delay: 110 });
         console.log(`[${new Date().toISOString()}] Typed wallet address`);
 
         // Wait for "Create an exchange" button to be enabled
@@ -77,7 +76,7 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         console.log(`[${new Date().toISOString()}] Create button is enabled`);
 
         await page.click(createButtonSelector);
-        await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
+        await page.waitForNavigation({ timeout: 45000, waitUntil: 'networkidle2' });
 
         const exchangeUrl = page.url();
         const exchangeId = new URL(exchangeUrl).searchParams.get('id');
