@@ -51,19 +51,29 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        // Wait a bit for dynamic content to render
-        await page.waitForTimeout(2000);
+        // Wait for address input field
+        const addressInputSelector = 'input[placeholder*="address" i]';
+        await page.waitForSelector(addressInputSelector, { timeout: 20000 });
 
-        // Find and fill wallet address input
-        const input = page.getByLabel(/address/i).or(
-            page.getByPlaceholder(/polygon.*address/i)
-        ).first();
+        // Type address with delay to trigger form validation
+        await page.type(addressInputSelector, walletAddress, { delay: 110 });
+        console.log(`[${new Date().toISOString()}] Typed wallet address`);
 
-        await input.fill(walletAddress);
-        await input.press('Enter');
+        // Wait for "Create an exchange" button to be enabled
+        const createButtonSelector = 'button[data-testid="create-exchange-button"]';
+        await page.waitForFunction(
+            (selector) => {
+                const btn = document.querySelector(selector);
+                return btn && !btn.disabled;
+            },
+            { timeout: 20000 },
+            createButtonSelector
+        );
+        console.log(`[${new Date().toISOString()}] Create button is enabled`);
 
-        // Wait for navigation to exchange page
-        await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
+        // Click the button and wait for navigation
+        await page.click(createButtonSelector);
+        await page.waitForNavigation({ timeout: 45000, waitUntil: 'load' });
 
         const exchangeUrl = page.url();
         const exchangeId = new URL(exchangeUrl).searchParams.get('id');
