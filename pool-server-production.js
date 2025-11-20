@@ -56,25 +56,14 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         await page.waitForTimeout(2000);
         console.log(`[${new Date().toISOString()}] Page loaded`);
 
-        // Wait for address input field
+        // Wait for address input field and type with delay
         const addressInputSelector = 'input[placeholder*="address" i]';
-        await page.waitForSelector(addressInputSelector, { timeout: 20000 });
+        const addressInput = page.locator(addressInputSelector);
+        await addressInput.waitFor({ timeout: 20000 });
 
-        // Use JavaScript to fill the input field and trigger all necessary events
-        await page.evaluate((selector, value) => {
-            const input = document.querySelector(selector);
-            if (input) {
-                input.value = value;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-                input.dispatchEvent(new Event('blur', { bubbles: true }));
-            }
-        }, addressInputSelector, walletAddress);
-
-        console.log(`[${new Date().toISOString()}] Filled wallet address via JavaScript`);
-
-        // Wait longer for validation to complete
-        await page.waitForTimeout(1500);
+        // Type address character by character with delay (like Puppeteer page.type)
+        await addressInput.pressSequentially(walletAddress, { delay: 110 });
+        console.log(`[${new Date().toISOString()}] Typed wallet address`);
 
         // Wait for "Create an exchange" button to be enabled
         const createButtonSelector = 'button[data-testid="create-exchange-button"]';
