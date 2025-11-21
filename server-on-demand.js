@@ -93,7 +93,8 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
         // Use .fill() which properly triggers React validation
         const addressInput = page.locator('input[placeholder*="address" i]').first();
-        await addressInput.fill(walletAddress, { force: true });
+        await addressInput.click({ force: true }); // Focus with force
+        await addressInput.fill(walletAddress);
         console.log(`[${new Date().toISOString()}] Wallet filled`);
 
         await page.waitForTimeout(2000); // React validation
