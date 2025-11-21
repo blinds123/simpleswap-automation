@@ -62,10 +62,28 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForTimeout(2000);
 
+        // Dismiss any alert/warning messages that might block interaction
+        try {
+            const alertSelector = '[data-testid="info-message"]';
+            const alertExists = await page.$(alertSelector);
+            if (alertExists) {
+                // Try to find and click close button
+                const closeButton = await page.$(`${alertSelector} button`);
+                if (closeButton) {
+                    await closeButton.click();
+                    await page.waitForTimeout(500);
+                }
+            }
+        } catch (e) {
+            // Alert dismiss failed, continue anyway
+            console.log(`[${new Date().toISOString()}] Note: Could not dismiss alert (${e.message})`);
+        }
+
         // Fill wallet address
         const addressInputSelector = 'input[placeholder*="address" i]';
         await page.waitForSelector(addressInputSelector, { timeout: 20000 });
-        await page.click(addressInputSelector, { clickCount: 3 });
+        // Use force: true to bypass intercepting elements
+        await page.click(addressInputSelector, { clickCount: 3, force: true });
         await page.type(addressInputSelector, walletAddress, { delay: 50 });
 
         // Trigger blur for React validation
