@@ -16,5 +16,5 @@ COPY . .
 # Expose port (Render provides PORT env var)
 EXPOSE 3000
 
-# Start the server (NO POOL TEST - has all endpoints but no Playwright)
-CMD ["node", "server-no-pool.js"]
+# Start the server (LAZY PLAYWRIGHT LOADING)
+CMD ["node", "pool-server-production.js"]

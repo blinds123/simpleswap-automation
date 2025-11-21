@@ -1,9 +1,18 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { chromium } from 'playwright';
 
 dotenv.config();
+
+// Lazy-load Playwright only when needed (not at server startup)
+let chromium = null;
+async function getChromium() {
+    if (!chromium) {
+        const playwright = await import('playwright');
+        chromium = playwright.chromium;
+    }
+    return chromium;
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -47,7 +56,9 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
     let browser;
     try {
-        browser = await chromium.connectOverCDP(CDP_ENDPOINT);
+        // Lazy-load Playwright on first use
+        const chromiumInstance = await getChromium();
+        browser = await chromiumInstance.connectOverCDP(CDP_ENDPOINT);
         const context = browser.contexts()[0];
         const page = context.pages()[0] || await context.newPage();
         console.log(`[${new Date().toISOString()}] Connected to BrightData Scraping Browser`);
