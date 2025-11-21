@@ -16,5 +16,5 @@ COPY . .
 # Expose port (Render provides PORT env var)
 EXPOSE 3000
 
-# Start the server (LAZY PLAYWRIGHT LOADING)
-CMD ["node", "pool-server-production.js"]
+# Start the server (ON-DEMAND - no pool, creates exchanges in real-time)
+CMD ["node", "server-on-demand.js"]
