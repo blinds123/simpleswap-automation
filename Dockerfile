@@ -16,5 +16,5 @@ COPY . .
 # Expose port (Render provides PORT env var)
 EXPOSE 3000
 
-# Start the server (MINIMAL TEST)
-CMD ["node", "minimal-server.js"]
+# Start the server (NO POOL TEST - has all endpoints but no Playwright)
+CMD ["node", "server-no-pool.js"]
