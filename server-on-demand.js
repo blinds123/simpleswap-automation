@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
@@ -12,6 +14,9 @@ const MERCHANT_WALLET = process.env.MERCHANT_WALLET || "0x1372Ad41B513b9d6eC0080
 const POOL_SIZE = parseInt(process.env.POOL_SIZE) || 10;
 const MIN_POOL_SIZE = parseInt(process.env.MIN_POOL_SIZE) || 5;
 const PRODUCT_PRICE_USD = parseInt(process.env.PRODUCT_PRICE_USD) || 25;
+
+// Persistent storage file
+const POOL_FILE = path.join(process.cwd(), 'exchange-pool.json');
 
 // BrightData credentials
 const BRIGHTDATA_CUSTOMER_ID = process.env.BRIGHTDATA_CUSTOMER_ID;
@@ -137,9 +142,37 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
     }
 }
 
-// Exchange pool
+// Exchange pool with persistence
 let exchangePool = [];
 let isReplenishing = false;
+
+// Load pool from file on startup
+function loadPool() {
+    try {
+        if (fs.existsSync(POOL_FILE)) {
+            const data = fs.readFileSync(POOL_FILE, 'utf8');
+            exchangePool = JSON.parse(data);
+            console.log(`✓ Loaded ${exchangePool.length} exchanges from storage`);
+        } else {
+            console.log('ℹ No existing pool file found, starting with empty pool');
+        }
+    } catch (error) {
+        console.error('✗ Failed to load pool:', error.message);
+        exchangePool = [];
+    }
+}
+
+// Save pool to file
+function savePool() {
+    try {
+        fs.writeFileSync(POOL_FILE, JSON.stringify(exchangePool, null, 2));
+    } catch (error) {
+        console.error('✗ Failed to save pool:', error.message);
+    }
+}
+
+// Load pool on startup
+loadPool();
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -191,6 +224,7 @@ async function replenishPool() {
     }
 
     await Promise.all(promises);
+    savePool(); // Persist the new exchanges
     isReplenishing = false;
     console.log(`✓ Pool: ${exchangePool.length}/${POOL_SIZE}\n`);
 }
@@ -203,6 +237,7 @@ app.post('/buy-now', async (req, res) => {
         // If pool has exchanges, deliver instantly
         if (exchangePool.length > 0) {
             const exchange = exchangePool.shift();
+            savePool(); // Persist the change
             console.log(`✓ Delivered from pool: ${exchange.exchangeId} (pool: ${exchangePool.length}/${POOL_SIZE})`);
 
             // Trigger replenishment if low
@@ -294,6 +329,7 @@ app.post('/admin/init-pool', async (req, res) => {
         }
 
         await Promise.all(promises);
+        savePool(); // Persist the pool
         isReplenishing = false;
         console.log(`\n✓ Pool ready with ${exchangePool.length} exchanges\n`);
 
@@ -310,14 +346,15 @@ app.post('/admin/init-pool', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`\n🚀 SimpleSwap Pool Server v5.0.0 (Hybrid)`);
+    console.log(`\n🚀 SimpleSwap Pool Server v5.2.0 (Persistent Pool)`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Mode: HYBRID (pool + on-demand fallback)`);
-    console.log(`   Pool: ${exchangePool.length}/${POOL_SIZE} (empty at startup)`);
+    console.log(`   Pool: ${exchangePool.length}/${POOL_SIZE} exchanges loaded`);
+    console.log(`   Storage: ${POOL_FILE}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
     console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})`);
-    console.log(`\n✅ Server started! Use POST /admin/init-pool to fill exchange pool`);
-    console.log(`   Pool delivers instantly | Falls back to on-demand if empty\n`);
+    console.log(`\n✅ Server started! Exchanges persist across deployments`);
+    console.log(`   ${exchangePool.length > 0 ? 'Pool ready for instant delivery' : 'Use POST /admin/init-pool to fill pool'}\n`);
 });
 
 process.on('SIGTERM', () => {
