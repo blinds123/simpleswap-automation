@@ -102,18 +102,10 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
         await page.waitForTimeout(2000);
 
-        // Click create button
-        const createButtonSelector = 'button[data-testid="create-exchange-button"]';
-        await page.waitForFunction(
-            (selector) => {
-                const btn = document.querySelector(selector);
-                return btn && !btn.disabled;
-            },
-            { timeout: 10000 },
-            createButtonSelector
-        );
-
-        await page.click(createButtonSelector);
+        // Click create button - using modern locator API for elegance
+        const createButton = page.locator('button[data-testid="create-exchange-button"]');
+        await createButton.waitFor({ state: 'enabled', timeout: 10000 });
+        await createButton.click();
         await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
 
         const exchangeUrl = page.url();
