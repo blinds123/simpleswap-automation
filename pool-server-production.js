@@ -320,16 +320,15 @@ app.post('/admin/init-pool', async (req, res) => {
 // ============================================
 
 app.listen(PORT, () => {
-    console.log(`\n🚀 SimpleSwap Pool Server v3.2.2 (Fix: Add root endpoint for Render health checks)`);
+    console.log(`\n🚀 SimpleSwap Pool Server v3.6.0 (Manual-Only Pool Init)`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
     console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})`);
-    console.log(`\n✅ Server started! Initializing pool in background...\n`);
+    console.log(`\n✅ Server started successfully!`);
+    console.log(`⚠️  Pool is EMPTY (0/${POOL_SIZE}) - use POST /admin/init-pool to initialize\n`);
 
-    // Initialize pool in background (don't block server startup)
-    initializePool()
-        .then(() => console.log('✅ Pool initialization complete!\n'))
-        .catch(error => console.error('❌ Pool init error:', error.message));
+    // DO NOT auto-initialize pool - causes deployment failures
+    // Pool must be manually initialized via /admin/init-pool endpoint
 });
 
 process.on('SIGTERM', () => {
