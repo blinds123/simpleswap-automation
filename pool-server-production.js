@@ -179,6 +179,18 @@ async function replenishPool() {
 // ============================================
 
 /**
+ * GET / - Root endpoint (Render health check fallback)
+ */
+app.get('/', (req, res) => {
+    res.json({
+        service: 'SimpleSwap Pool Server',
+        status: 'running',
+        version: '3.2.2',
+        poolSize: exchangePool.length
+    });
+});
+
+/**
  * GET /health - Health check
  */
 app.get('/health', (req, res) => {
@@ -297,7 +309,7 @@ app.post('/admin/init-pool', async (req, res) => {
 // ============================================
 
 app.listen(PORT, () => {
-    console.log(`\n🚀 SimpleSwap Pool Server v3.2.1 (Async pool initialization - deployment test)`);
+    console.log(`\n🚀 SimpleSwap Pool Server v3.2.2 (Fix: Add root endpoint for Render health checks)`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
     console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})`);
