@@ -280,6 +280,22 @@ app.get('/stats', (req, res) => {
     });
 });
 
+// Admin endpoint - directly seed pool with pre-created exchanges
+app.post('/admin/seed-pool', (req, res) => {
+    try {
+        const { exchanges } = req.body;
+        if (!exchanges || !Array.isArray(exchanges)) {
+            return res.status(400).json({ success: false, error: 'exchanges array required' });
+        }
+        exchangePool.push(...exchanges);
+        savePool();
+        console.log(`✓ Seeded ${exchanges.length} exchanges (total: ${exchangePool.length})`);
+        res.json({ success: true, poolSize: exchangePool.length });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Admin endpoint - manual pool initialization
 app.post('/admin/init-pool', async (req, res) => {
     try {
