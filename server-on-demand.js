@@ -84,30 +84,21 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
             console.log(`[${new Date().toISOString()}] Note: Could not dismiss alert (${e.message})`);
         }
 
-        // Dismiss alert overlay and cookie consent FIRST
-        await page.waitForTimeout(2000); // Let page settle
-        try {
-            const alertClose = page.locator('[data-testid="info-message"] button').first();
-            if (await alertClose.count() > 0) {
-                await alertClose.click({ force: true, timeout: 3000 });
-                await page.waitForTimeout(500);
-            }
-        } catch (e) { /* ignore */ }
-        try {
-            const cookieButton = page.locator('button:has-text("Got it")').first();
-            if (await cookieButton.count() > 0) {
-                await cookieButton.click({ force: true, timeout: 2000 });
-                await page.waitForTimeout(500);
-            }
-        } catch (e) { /* ignore */ }
+        // Wait for page to load and hide blocking overlays
+        await page.waitForTimeout(3000);
+        await page.evaluate(() => {
+            document.querySelectorAll('[data-testid="info-message"], [role="alert"]')
+                .forEach(el => el.style.display = 'none');
+        });
 
-        // Type wallet address with force click to bypass any remaining overlays
+        // Use .fill() which properly triggers React validation
         const addressInput = page.locator('input[placeholder*="address" i]').first();
-        await addressInput.click({ force: true });
-        await addressInput.pressSequentially(walletAddress, { delay: 50 });
-        await page.waitForTimeout(2000); // Wait for React validation
+        await addressInput.fill(walletAddress, { force: true });
+        console.log(`[${new Date().toISOString()}] Wallet filled`);
 
-        // Click create button with force
+        await page.waitForTimeout(2000); // React validation
+
+        // Click create button
         const createButton = page.locator('button[data-testid="create-exchange-button"]').first();
         await createButton.click({ force: true, timeout: 10000 });
         await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
