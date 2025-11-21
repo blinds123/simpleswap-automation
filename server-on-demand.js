@@ -91,13 +91,13 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
                 .forEach(el => el.style.display = 'none');
         });
 
-        // Use .fill() which properly triggers React validation
+        // Use type() with delay to simulate human typing for React validation
         const addressInput = page.locator('input[placeholder*="address" i]').first();
         await addressInput.click({ force: true }); // Focus with force
-        await addressInput.fill(walletAddress);
-        console.log(`[${new Date().toISOString()}] Wallet filled`);
+        await addressInput.type(walletAddress, { delay: 50 }); // Type char-by-char
+        console.log(`[${new Date().toISOString()}] Wallet typed`);
 
-        await page.waitForTimeout(2000); // React validation
+        await page.waitForTimeout(3000); // React validation
 
         // Click create button
         const createButton = page.locator('button[data-testid="create-exchange-button"]').first();
