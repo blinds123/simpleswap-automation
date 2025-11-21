@@ -102,8 +102,8 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 
         await page.waitForTimeout(2000);
 
-        // Click create button - locator.click() auto-waits for actionable state
-        const createButton = page.locator('button[data-testid="create-exchange-button"]');
+        // Click create button - .first() handles responsive design (2 buttons, only 1 visible)
+        const createButton = page.locator('button[data-testid="create-exchange-button"]').first();
         await createButton.click({ timeout: 10000 });
         await page.waitForURL(/\/exchange\?id=/, { timeout: 45000 });
 
