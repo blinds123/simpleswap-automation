@@ -23,4 +23,6 @@ services:
         value: 5
       - key: FRONTEND_URL
         value: https://beigesneaker.netlify.app
+      - key: PRODUCT_PRICE_USD
+        value: 25
     healthCheckPath: /health

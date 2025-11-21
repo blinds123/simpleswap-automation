@@ -16,5 +16,5 @@ COPY . .
 # Expose port (Render provides PORT env var)
 EXPOSE 3000
 
-# Start the server
-CMD ["node", "pool-server-production.js"]
+# Start the server (MINIMAL TEST)
+CMD ["node", "minimal-server.js"]

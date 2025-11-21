@@ -1,0 +1,10 @@
+[
+  {"key": "MERCHANT_WALLET", "value": "0x1372Ad41B513b9d6eC008086C03d69C635bAE578"},
+  {"key": "POOL_SIZE", "value": "10"},
+  {"key": "MIN_POOL_SIZE", "value": "5"},
+  {"key": "PRODUCT_PRICE_USD", "value": "25"},
+  {"key": "FRONTEND_URL", "value": "https://beigesneaker.netlify.app"},
+  {"key": "BRIGHTDATA_CUSTOMER_ID", "value": "hl_9d12e57c"},
+  {"key": "BRIGHTDATA_ZONE", "value": "scraping_browser1"},
+  {"key": "BRIGHTDATA_PASSWORD", "value": "u2ynaxqh9899"}
+]
