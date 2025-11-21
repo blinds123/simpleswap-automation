@@ -16,5 +16,5 @@ COPY . .
 # Expose port (Render provides PORT env var)
 EXPOSE 3000
 
-# Start the server (ON-DEMAND - no pool, creates exchanges in real-time)
-CMD ["node", "server-on-demand.js"]
+# Start the server (POOL MODE - manual initialization via /admin/init-pool)
+CMD ["node", "pool-server-production.js"]
