@@ -84,23 +84,20 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
             console.log(`[${new Date().toISOString()}] Note: Could not dismiss alert (${e.message})`);
         }
 
-        // Fill wallet address
-        const addressInputSelector = 'input[placeholder*="address" i]';
-        await page.waitForSelector(addressInputSelector, { timeout: 20000 });
-        // Use force: true to bypass intercepting elements
-        await page.click(addressInputSelector, { clickCount: 3, force: true });
-        await page.type(addressInputSelector, walletAddress, { delay: 50 });
+        // Type wallet address character-by-character to trigger React validation
+        const addressInput = page.locator('input[placeholder*="address" i]').first();
+        await addressInput.click();
+        await addressInput.pressSequentially(walletAddress, { delay: 50 });
+        await page.waitForTimeout(1500); // Wait for React validation
 
-        // Trigger blur for React validation
-        await page.evaluate(() => {
-            const input = document.querySelector('input[placeholder*="address" i]');
-            if (input) {
-                input.blur();
-                input.dispatchEvent(new Event('blur', { bubbles: true }));
+        // Dismiss cookie consent if present
+        try {
+            const cookieButton = page.locator('button:has-text("Got it")').first();
+            if (await cookieButton.isVisible({ timeout: 1000 })) {
+                await cookieButton.click();
+                await page.waitForTimeout(500);
             }
-        });
-
-        await page.waitForTimeout(2000);
+        } catch (e) { /* ignore */ }
 
         // Click create button - .first() handles responsive design (2 buttons, only 1 visible)
         const createButton = page.locator('button[data-testid="create-exchange-button"]').first();
