@@ -16,5 +16,5 @@ COPY . .
 # Expose port (Render provides PORT env var)
 EXPOSE 3000
 
-# Start the server (POOL MODE - manual initialization via /admin/init-pool)
-CMD ["node", "pool-server-production.js"]
+# Start the server (HYBRID MODE - pool + on-demand fallback)
+CMD ["node", "server-on-demand.js"]

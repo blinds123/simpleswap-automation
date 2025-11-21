@@ -117,14 +117,21 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
     }
 }
 
+// Exchange pool
+let exchangePool = [];
+let isReplenishing = false;
+
 // Root endpoint
 app.get('/', (req, res) => {
     res.json({
-        service: 'SimpleSwap On-Demand Server',
+        service: 'SimpleSwap Pool Server (Hybrid)',
         status: 'running',
-        version: '4.0.0',
-        mode: 'on-demand (no pool)',
-        note: 'Exchanges created in real-time when requested (30-60s)'
+        version: '5.0.0',
+        mode: exchangePool.length > 0 ? 'pool' : 'on-demand',
+        poolSize: exchangePool.length,
+        note: exchangePool.length > 0
+            ? 'Instant delivery from pool'
+            : 'Exchanges created on demand - use /admin/init-pool to fill pool'
     });
 });
 
@@ -132,35 +139,83 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
-        mode: 'on-demand',
+        mode: exchangePool.length > 0 ? 'pool' : 'on-demand',
+        poolSize: exchangePool.length,
+        maxPool: POOL_SIZE,
+        isReplenishing,
         productPrice: PRODUCT_PRICE_USD,
         timestamp: new Date().toISOString()
     });
 });
 
-// Buy now endpoint - creates exchange on-demand
+// Replenishment function
+async function replenishPool() {
+    if (isReplenishing) return;
+
+    const needed = POOL_SIZE - exchangePool.length;
+    if (needed <= 0) return;
+
+    isReplenishing = true;
+    console.log(`\n🔄 Replenishing ${needed} exchanges...`);
+
+    const promises = [];
+    for (let i = 0; i < needed; i++) {
+        promises.push(
+            createExchange(MERCHANT_WALLET, PRODUCT_PRICE_USD)
+                .then(exchange => {
+                    exchangePool.push(exchange);
+                    console.log(`   [${i + 1}/${needed}] ✓`);
+                })
+                .catch(err => console.error(`   [${i + 1}/${needed}] ✗`, err.message))
+        );
+    }
+
+    await Promise.all(promises);
+    isReplenishing = false;
+    console.log(`✓ Pool: ${exchangePool.length}/${POOL_SIZE}\n`);
+}
+
+// Buy now endpoint - uses pool if available, otherwise on-demand
 app.post('/buy-now', async (req, res) => {
     try {
-        console.log(`\n🛒 Buy Now request - creating exchange on-demand...`);
+        console.log(`\n🛒 Buy Now request received`);
 
-        // Create exchange in real-time (will take 30-60 seconds)
+        // If pool has exchanges, deliver instantly
+        if (exchangePool.length > 0) {
+            const exchange = exchangePool.shift();
+            console.log(`✓ Delivered from pool: ${exchange.exchangeId} (pool: ${exchangePool.length}/${POOL_SIZE})`);
+
+            // Trigger replenishment if low
+            if (exchangePool.length < MIN_POOL_SIZE) {
+                console.log(`🔔 Pool low (${exchangePool.length}/${MIN_POOL_SIZE}) - replenishing`);
+                replenishPool().catch(console.error);
+            }
+
+            return res.json({
+                success: true,
+                ...exchange,
+                poolStatus: 'instant'
+            });
+        }
+
+        // If pool empty, create on-demand
+        console.log('⚠ Pool empty - creating on-demand');
         const exchange = await createExchange(MERCHANT_WALLET, PRODUCT_PRICE_USD);
 
-        console.log(`✓ Delivered on-demand exchange: ${exchange.exchangeId}`);
+        // Start background replenishment
+        replenishPool().catch(console.error);
 
         res.json({
             success: true,
             ...exchange,
-            mode: 'on-demand',
-            note: 'Exchange created in real-time'
+            poolStatus: 'on-demand'
         });
 
     } catch (error) {
-        console.error('✗ On-demand creation failed:', error);
+        console.error('✗ Buy Now error:', error);
         res.status(500).json({
             success: false,
-            error: error.message,
-            note: 'Failed to create exchange - try again'
+            error: error.message
         });
     }
 });
@@ -168,21 +223,81 @@ app.post('/buy-now', async (req, res) => {
 // Stats endpoint
 app.get('/stats', (req, res) => {
     res.json({
-        mode: 'on-demand',
-        poolSize: 0,
-        note: 'No pool - exchanges created on demand',
+        mode: exchangePool.length > 0 ? 'pool' : 'on-demand',
+        poolSize: exchangePool.length,
+        maxSize: POOL_SIZE,
+        minSize: MIN_POOL_SIZE,
+        isReplenishing,
         productPrice: PRODUCT_PRICE_USD,
-        merchantWallet: MERCHANT_WALLET
+        merchantWallet: MERCHANT_WALLET,
+        exchanges: exchangePool.map(e => ({
+            id: e.exchangeId,
+            created: e.createdAt
+        }))
     });
 });
 
+// Admin endpoint - manual pool initialization
+app.post('/admin/init-pool', async (req, res) => {
+    try {
+        if (isReplenishing) {
+            return res.json({ success: false, error: 'Pool is already initializing' });
+        }
+
+        if (exchangePool.length >= POOL_SIZE) {
+            return res.json({
+                success: false,
+                error: 'Pool is already full',
+                poolSize: exchangePool.length
+            });
+        }
+
+        console.log('\n🔧 Manual pool initialization triggered...\n');
+
+        // Clear existing pool and reinitialize
+        exchangePool.length = 0;
+
+        isReplenishing = true;
+        const needed = POOL_SIZE;
+        console.log(`🏊 Initializing pool with ${needed} exchanges...\n`);
+
+        const promises = [];
+        for (let i = 0; i < needed; i++) {
+            promises.push(
+                createExchange(MERCHANT_WALLET, PRODUCT_PRICE_USD)
+                    .then(exchange => {
+                        exchangePool.push(exchange);
+                        console.log(`   [${i + 1}/${needed}] ✓`);
+                    })
+                    .catch(err => console.error(`   [${i + 1}/${needed}] ✗`, err.message))
+            );
+        }
+
+        await Promise.all(promises);
+        isReplenishing = false;
+        console.log(`\n✓ Pool ready with ${exchangePool.length} exchanges\n`);
+
+        res.json({
+            success: true,
+            poolSize: exchangePool.length,
+            message: `Pool initialized with ${exchangePool.length} exchanges`
+        });
+    } catch (error) {
+        isReplenishing = false;
+        console.error('❌ Manual init failed:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.listen(PORT, () => {
-    console.log(`\n🚀 SimpleSwap On-Demand Server v4.0.0`);
+    console.log(`\n🚀 SimpleSwap Pool Server v5.0.0 (Hybrid)`);
     console.log(`   Port: ${PORT}`);
-    console.log(`   Mode: ON-DEMAND (no pool)`);
+    console.log(`   Mode: HYBRID (pool + on-demand fallback)`);
+    console.log(`   Pool: ${exchangePool.length}/${POOL_SIZE} (empty at startup)`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
     console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})`);
-    console.log(`\n✅ Server started! Exchanges created in real-time (30-60s per request)\n`);
+    console.log(`\n✅ Server started! Use POST /admin/init-pool to fill exchange pool`);
+    console.log(`   Pool delivers instantly | Falls back to on-demand if empty\n`);
 });
 
 process.on('SIGTERM', () => {
