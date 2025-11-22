@@ -2,7 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import { writeFile, rename, unlink } from 'fs/promises';
 import path from 'path';
+import lockfile from 'proper-lockfile';
+import { randomBytes } from 'crypto';
 
 dotenv.config();
 
@@ -17,6 +20,28 @@ const PRODUCT_PRICE_USD = parseInt(process.env.PRODUCT_PRICE_USD) || 25;
 
 // Persistent storage file
 const POOL_FILE = path.join(process.cwd(), 'exchange-pool.json');
+
+// Triple-pool configuration
+const POOL_CONFIG = {
+  '29': {
+    size: 5,
+    minSize: 3,
+    amount: 29,
+    description: 'Preorder (no order bump)'
+  },
+  '39': {
+    size: 5,
+    minSize: 3,
+    amount: 39,
+    description: 'Preorder + Order Bump ($29 + $10)'
+  },
+  '69': {
+    size: 5,
+    minSize: 3,
+    amount: 69,
+    description: 'Regular (covers $69 and $79)'
+  }
+};
 
 // BrightData credentials
 const BRIGHTDATA_CUSTOMER_ID = process.env.BRIGHTDATA_CUSTOMER_ID;
@@ -50,8 +75,8 @@ async function getChromium() {
 /**
  * Creates a SimpleSwap exchange on-demand (no pool)
  */
-async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
-    console.log(`[${new Date().toISOString()}] Creating on-demand exchange for $${amountUSD}...`);
+async function createExchange(amountUSD = PRODUCT_PRICE_USD, walletAddress = MERCHANT_WALLET) {
+    console.log(`[CREATE-EXCHANGE] Creating exchange for $${amountUSD}...`);
 
     const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
 
@@ -111,13 +136,14 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
             throw new Error('No exchange ID in URL');
         }
 
-        console.log(`[${new Date().toISOString()}] ✓ Created: ${exchangeId}`);
+        console.log(`[CREATE-EXCHANGE] ✓ Created: ${exchangeId} for $${amountUSD}`);
 
         return {
+            id: exchangeId,
             exchangeId,
             exchangeUrl,
-            amountUSD,
-            createdAt: new Date().toISOString()
+            amount: amountUSD,
+            created: new Date().toISOString()
         };
 
     } catch (error) {
@@ -134,45 +160,101 @@ async function createExchange(walletAddress, amountUSD = PRODUCT_PRICE_USD) {
 let exchangePool = [];
 let isReplenishing = false;
 
+// Replenishment locks - prevents concurrent replenishment of same pool
+const replenishmentLocks = {
+  '29': false,
+  '39': false,
+  '69': false
+};
+
 // Load pool from file on startup
-function loadPool() {
+async function loadPool() {
     try {
         if (fs.existsSync(POOL_FILE)) {
             const data = fs.readFileSync(POOL_FILE, 'utf8');
-            exchangePool = JSON.parse(data);
-            console.log(`✓ Loaded ${exchangePool.length} exchanges from storage`);
+            const pools = JSON.parse(data);
+
+            // Validate structure - ensure all three pools exist
+            if (!pools['29']) pools['29'] = [];
+            if (!pools['39']) pools['39'] = [];
+            if (!pools['69']) pools['69'] = [];
+
+            return pools;
         } else {
-            console.log('ℹ No existing pool file found, starting with empty pool');
+            console.log('[LOAD-POOL] No existing pool file, returning empty structure');
+            return { '29': [], '39': [], '69': [] };
         }
     } catch (error) {
-        console.error('✗ Failed to load pool:', error.message);
-        exchangePool = [];
+        console.error('[LOAD-POOL] Failed to load pool:', error.message);
+        return { '29': [], '39': [], '69': [] };
     }
 }
 
-// Save pool to file
-function savePool() {
+// Save pool to file with atomic writes
+async function savePool(pools) {
+    // Validate structure before saving
+    if (!pools['29']) pools['29'] = [];
+    if (!pools['39']) pools['39'] = [];
+    if (!pools['69']) pools['69'] = [];
+
+    // Write to temporary file first
+    const tempFile = `${POOL_FILE}.${randomBytes(8).toString('hex')}.tmp`;
+
     try {
-        fs.writeFileSync(POOL_FILE, JSON.stringify(exchangePool, null, 2));
+        await writeFile(tempFile, JSON.stringify(pools, null, 2), 'utf8');
+
+        // Atomic rename (if process crashes after this, file is safe)
+        await rename(tempFile, POOL_FILE);
+
+        console.log('[SAVE-POOL] Pool saved:', {
+            '29': pools['29'].length,
+            '39': pools['39'].length,
+            '69': pools['69'].length
+        });
     } catch (error) {
-        console.error('✗ Failed to save pool:', error.message);
+        // Clean up temp file if it exists
+        try {
+            await unlink(tempFile);
+        } catch (unlinkError) {
+            // Ignore unlink errors
+        }
+        throw error;
     }
 }
 
-// Load pool on startup
-loadPool();
+// Normalize amount to pool key
+function normalizeAmount(amountUSD) {
+    const amount = parseInt(amountUSD);
+
+    // Exact matching for known amounts
+    if (amount === 29) return '29';
+    if (amount === 39) return '39';
+    if (amount === 69 || amount === 79) return '69';
+
+    // Reject invalid amounts
+    throw new Error(`Invalid amount: $${amount}. Expected: 29, 39, 69, or 79`);
+}
 
 // Root endpoint
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
+    const pools = await loadPool();
+    const totalSize = (pools['29']?.length || 0) + (pools['39']?.length || 0) + (pools['69']?.length || 0);
+
     res.json({
-        service: 'SimpleSwap Pool Server (Hybrid)',
+        service: 'SimpleSwap Triple-Pool Server',
         status: 'running',
-        version: '5.0.0',
-        mode: exchangePool.length > 0 ? 'pool' : 'on-demand',
-        poolSize: exchangePool.length,
-        note: exchangePool.length > 0
-            ? 'Instant delivery from pool'
-            : 'Exchanges created on demand - use /admin/init-pool to fill pool'
+        version: '6.0.0',
+        mode: 'triple-pool',
+        pools: {
+            '29': pools['29']?.length || 0,
+            '39': pools['39']?.length || 0,
+            '69': pools['69']?.length || 0
+        },
+        totalSize,
+        totalMaxSize: 15,
+        note: totalSize > 0
+            ? 'Triple-pool system ready - instant delivery for $29, $39, and $69'
+            : 'Use POST /admin/init-pool to initialize pools'
     });
 });
 
@@ -180,82 +262,231 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
-        mode: exchangePool.length > 0 ? 'pool' : 'on-demand',
-        poolSize: exchangePool.length,
-        maxPool: POOL_SIZE,
-        isReplenishing,
-        productPrice: PRODUCT_PRICE_USD,
+        mode: 'triple-pool',
         timestamp: new Date().toISOString()
     });
 });
 
-// Replenishment function
-async function replenishPool() {
-    if (isReplenishing) return;
+// Pool health check endpoint
+app.get('/health/pools', async (req, res) => {
+    try {
+        const pools = await loadPool();
+        const health = {};
+        let overallStatus = 'healthy';
 
-    const needed = POOL_SIZE - exchangePool.length;
-    if (needed <= 0) return;
+        for (const [key, config] of Object.entries(POOL_CONFIG)) {
+            const poolSize = pools[key]?.length || 0;
+            const status = poolSize >= config.minSize ? 'healthy' : poolSize > 0 ? 'low' : 'empty';
 
-    isReplenishing = true;
-    console.log(`\n🔄 Replenishing ${needed} exchanges...`);
+            if (status !== 'healthy') {
+                overallStatus = 'degraded';
+            }
 
-    const promises = [];
-    for (let i = 0; i < needed; i++) {
-        promises.push(
-            createExchange(MERCHANT_WALLET, PRODUCT_PRICE_USD)
-                .then(exchange => {
-                    exchangePool.push(exchange);
-                    console.log(`   [${i + 1}/${needed}] ✓`);
-                })
-                .catch(err => console.error(`   [${i + 1}/${needed}] ✗`, err.message))
-        );
+            health[key] = {
+                status,
+                size: poolSize,
+                target: config.size,
+                minSize: config.minSize,
+                description: config.description
+            };
+        }
+
+        res.json({
+            status: overallStatus,
+            pools: health,
+            isReplenishing: {
+                '29': replenishmentLocks['29'],
+                '39': replenishmentLocks['39'],
+                '69': replenishmentLocks['69']
+            },
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
+});
+
+// Replenishment function with concurrency control
+async function replenishPool(poolKey) {
+    // Check if already replenishing this pool
+    if (replenishmentLocks[poolKey]) {
+        console.log(`[REPLENISH] Pool ${poolKey} already replenishing, skipping`);
+        return;
     }
 
-    await Promise.all(promises);
-    savePool(); // Persist the new exchanges
-    isReplenishing = false;
-    console.log(`✓ Pool: ${exchangePool.length}/${POOL_SIZE}\n`);
+    // Acquire replenishment lock
+    replenishmentLocks[poolKey] = true;
+    console.log(`[REPLENISH] Starting replenishment for pool ${poolKey}`);
+
+    try {
+        const pools = await loadPool();
+        const targetPool = pools[poolKey];
+        const config = POOL_CONFIG[poolKey];
+
+        if (!targetPool) {
+            console.error(`[REPLENISH] Pool ${poolKey} does not exist!`);
+            return;
+        }
+
+        // Re-check pool size (might have been replenished by another process)
+        const needed = config.size - targetPool.length;
+        if (needed <= 0) {
+            console.log(`[REPLENISH] Pool ${poolKey} already full (${targetPool.length}/${config.size}), aborting`);
+            return;
+        }
+
+        console.log(`[REPLENISH] Creating ${needed} exchanges for pool ${poolKey} in parallel`);
+
+        // Create all needed exchanges in parallel for speed
+        const promises = [];
+        for (let i = 0; i < needed; i++) {
+            promises.push(
+                createExchange(config.amount)
+                    .then(exchange => {
+                        exchange.amount = config.amount;
+                        return exchange;
+                    })
+                    .catch(error => {
+                        console.error(`[REPLENISH] Failed exchange ${i+1}/${needed} for pool ${poolKey}:`, error);
+                        return null; // Return null for failed exchanges
+                    })
+            );
+        }
+
+        // Wait for all exchanges to be created
+        const results = await Promise.all(promises);
+        const validExchanges = results.filter(e => e !== null);
+
+        console.log(`[REPLENISH] Created ${validExchanges.length}/${needed} exchanges successfully`);
+
+        // Acquire file lock for atomic save
+        let release;
+        try {
+            release = await lockfile.lock(POOL_FILE, {
+                retries: { retries: 5, minTimeout: 200, maxTimeout: 1000 }
+            });
+
+            // Re-load pool to get latest state
+            const freshPools = await loadPool();
+            freshPools[poolKey].push(...validExchanges);
+
+            await savePool(freshPools);
+            await release();
+
+            console.log(`[REPLENISH] Pool ${poolKey} now has ${freshPools[poolKey].length}/${config.size} exchanges`);
+
+        } catch (lockError) {
+            if (release) await release();
+            console.error(`[REPLENISH] Failed to acquire lock for saving:`, lockError);
+            // Exchanges are lost, but pool will replenish on next request
+        }
+
+    } catch (error) {
+        console.error(`[REPLENISH] Replenishment failed for pool ${poolKey}:`, error);
+    } finally {
+        // Always release replenishment lock
+        replenishmentLocks[poolKey] = false;
+        console.log(`[REPLENISH] Replenishment lock released for pool ${poolKey}`);
+    }
 }
 
 // Buy now endpoint - uses pool if available, otherwise on-demand
 app.post('/buy-now', async (req, res) => {
     try {
-        console.log(`\n🛒 Buy Now request received`);
+        const { amountUSD } = req.body;
 
-        // If pool has exchanges, deliver instantly
-        if (exchangePool.length > 0) {
-            const exchange = exchangePool.shift();
-            savePool(); // Persist the change
-            console.log(`✓ Delivered from pool: ${exchange.exchangeId} (pool: ${exchangePool.length}/${POOL_SIZE})`);
-
-            // Trigger replenishment if low
-            if (exchangePool.length < MIN_POOL_SIZE) {
-                console.log(`🔔 Pool low (${exchangePool.length}/${MIN_POOL_SIZE}) - replenishing`);
-                replenishPool().catch(console.error);
-            }
-
-            return res.json({
-                success: true,
-                ...exchange,
-                poolStatus: 'instant'
+        // Validate input
+        if (!amountUSD) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required parameter: amountUSD'
             });
         }
 
-        // If pool empty, create on-demand
-        console.log('⚠ Pool empty - creating on-demand');
-        const exchange = await createExchange(MERCHANT_WALLET, PRODUCT_PRICE_USD);
+        const amount = parseInt(amountUSD);
+        if (isNaN(amount) || ![29, 39, 69, 79].includes(amount)) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid amount: $${amountUSD}. Expected: 29, 39, 69, or 79`
+            });
+        }
 
-        // Start background replenishment
-        replenishPool().catch(console.error);
+        console.log(`[BUY-NOW] Request received for amount: $${amountUSD}`);
 
-        res.json({
-            success: true,
-            ...exchange,
-            poolStatus: 'on-demand'
-        });
+        // Normalize amount to pool key
+        const poolKey = normalizeAmount(amountUSD);
+        console.log(`[BUY-NOW] Normalized to pool key: ${poolKey}`);
+
+        // CRITICAL: Acquire file lock for atomic read-modify-write
+        let release;
+        try {
+            release = await lockfile.lock(POOL_FILE, {
+                retries: { retries: 10, minTimeout: 100, maxTimeout: 1000 }
+            });
+        } catch (lockError) {
+            console.error(`[BUY-NOW] Failed to acquire lock:`, lockError);
+            // Fallback to on-demand if lock fails
+            const exchange = await createExchange(parseInt(poolKey));
+            return res.json({
+                success: true,
+                exchangeUrl: exchange.exchangeUrl,
+                poolStatus: 'on-demand-lock-failed'
+            });
+        }
+
+        try {
+            const pools = await loadPool();
+            const targetPool = pools[poolKey];
+
+            if (!targetPool || targetPool.length === 0) {
+                console.log(`[BUY-NOW] Pool ${poolKey} empty, creating on-demand`);
+                await release(); // Release lock before slow operation
+                const exchange = await createExchange(parseInt(poolKey));
+
+                // Trigger replenishment in background
+                replenishPool(poolKey).catch(err =>
+                    console.error(`[BUY-NOW] Background replenishment failed:`, err)
+                );
+
+                return res.json({
+                    success: true,
+                    exchangeUrl: exchange.exchangeUrl,
+                    poolStatus: 'on-demand'
+                });
+            }
+
+            // Get exchange from specific pool
+            const exchange = targetPool.shift();
+            console.log(`[BUY-NOW] Delivered exchange from pool ${poolKey}: ${exchange.exchangeId || exchange.id}`);
+            console.log(`[BUY-NOW] Remaining in pool ${poolKey}: ${targetPool.length}`);
+
+            await savePool(pools);
+            await release(); // Release lock ASAP
+
+            // Trigger replenishment for specific pool (outside lock)
+            if (targetPool.length < POOL_CONFIG[poolKey].minSize) {
+                console.log(`[BUY-NOW] Pool ${poolKey} below minimum (${POOL_CONFIG[poolKey].minSize}), triggering replenishment`);
+                replenishPool(poolKey).catch(err =>
+                    console.error(`[BUY-NOW] Replenishment failed:`, err)
+                );
+            }
+
+            res.json({
+                success: true,
+                exchangeUrl: exchange.exchangeUrl,
+                poolStatus: 'instant'
+            });
+
+        } catch (error) {
+            await release(); // Ensure lock is released on error
+            throw error;
+        }
 
     } catch (error) {
-        console.error('✗ Buy Now error:', error);
+        console.error('[BUY-NOW] Error:', error);
         res.status(500).json({
             success: false,
             error: error.message
@@ -264,19 +495,35 @@ app.post('/buy-now', async (req, res) => {
 });
 
 // Stats endpoint
-app.get('/stats', (req, res) => {
+app.get('/stats', async (req, res) => {
+    const pools = await loadPool();
+
     res.json({
-        mode: exchangePool.length > 0 ? 'pool' : 'on-demand',
-        poolSize: exchangePool.length,
-        maxSize: POOL_SIZE,
-        minSize: MIN_POOL_SIZE,
-        isReplenishing,
-        productPrice: PRODUCT_PRICE_USD,
-        merchantWallet: MERCHANT_WALLET,
-        exchanges: exchangePool.map(e => ({
-            id: e.exchangeId,
-            created: e.createdAt
-        }))
+        pools: {
+            '29': {
+                description: POOL_CONFIG['29'].description,
+                size: pools['29'] ? pools['29'].length : 0,
+                maxSize: POOL_CONFIG['29'].size,
+                minSize: POOL_CONFIG['29'].minSize,
+                exchanges: pools['29'] || []
+            },
+            '39': {
+                description: POOL_CONFIG['39'].description,
+                size: pools['39'] ? pools['39'].length : 0,
+                maxSize: POOL_CONFIG['39'].size,
+                minSize: POOL_CONFIG['39'].minSize,
+                exchanges: pools['39'] || []
+            },
+            '69': {
+                description: POOL_CONFIG['69'].description,
+                size: pools['69'] ? pools['69'].length : 0,
+                maxSize: POOL_CONFIG['69'].size,
+                minSize: POOL_CONFIG['69'].minSize,
+                exchanges: pools['69'] || []
+            }
+        },
+        totalSize: (pools['29']?.length || 0) + (pools['39']?.length || 0) + (pools['69']?.length || 0),
+        totalMaxSize: POOL_CONFIG['29'].size + POOL_CONFIG['39'].size + POOL_CONFIG['69'].size
     });
 });
 
@@ -299,66 +546,109 @@ app.post('/admin/seed-pool', (req, res) => {
 // Admin endpoint - manual pool initialization
 app.post('/admin/init-pool', async (req, res) => {
     try {
-        if (isReplenishing) {
-            return res.json({ success: false, error: 'Pool is already initializing' });
-        }
-
-        if (exchangePool.length >= POOL_SIZE) {
+        // Check if any pool is already replenishing
+        const alreadyReplenishing = Object.values(replenishmentLocks).some(lock => lock);
+        if (alreadyReplenishing) {
             return res.json({
                 success: false,
-                error: 'Pool is already full',
-                poolSize: exchangePool.length
+                error: 'One or more pools are already initializing'
             });
         }
 
-        console.log('\n🔧 Manual pool initialization triggered...\n');
+        console.log('[INIT-POOL] Starting triple-pool initialization...');
+        console.log('[INIT-POOL] Creating 15 exchanges in parallel (5 per pool)...');
 
-        // Clear existing pool and reinitialize
-        exchangePool.length = 0;
+        const pools = { '29': [], '39': [], '69': [] };
+        const allPromises = [];
 
-        isReplenishing = true;
-        const needed = POOL_SIZE;
-        console.log(`🏊 Initializing pool with ${needed} exchanges...\n`);
-
-        const promises = [];
-        for (let i = 0; i < needed; i++) {
-            promises.push(
-                createExchange(MERCHANT_WALLET, PRODUCT_PRICE_USD)
-                    .then(exchange => {
-                        exchangePool.push(exchange);
-                        console.log(`   [${i + 1}/${needed}] ✓`);
-                    })
-                    .catch(err => console.error(`   [${i + 1}/${needed}] ✗`, err.message))
-            );
+        // Create all 15 exchanges in parallel for speed
+        for (const [poolKey, config] of Object.entries(POOL_CONFIG)) {
+            for (let i = 0; i < config.size; i++) {
+                allPromises.push(
+                    createExchange(config.amount)
+                        .then(exchange => {
+                            exchange.amount = config.amount;
+                            pools[poolKey].push(exchange);
+                            console.log(`[INIT-POOL] Pool ${poolKey}: exchange ${pools[poolKey].length}/${config.size} created`);
+                            return { poolKey, success: true };
+                        })
+                        .catch(error => {
+                            console.error(`[INIT-POOL] Pool ${poolKey}: failed to create exchange:`, error);
+                            return { poolKey, success: false, error };
+                        })
+                );
+            }
         }
 
-        await Promise.all(promises);
-        savePool(); // Persist the pool
-        isReplenishing = false;
-        console.log(`\n✓ Pool ready with ${exchangePool.length} exchanges\n`);
+        // Wait for all exchanges to be created
+        const results = await Promise.all(allPromises);
+
+        // Count successes and failures
+        const successes = results.filter(r => r.success).length;
+        const failures = results.filter(r => !r.success).length;
+
+        console.log(`[INIT-POOL] Creation complete: ${successes} succeeded, ${failures} failed`);
+
+        if (successes === 0) {
+            return res.status(500).json({
+                success: false,
+                error: 'Pool initialization failed - no exchanges were created'
+            });
+        }
+
+        await savePool(pools);
+
+        console.log('[INIT-POOL] Triple-pool initialization complete!');
+        console.log('[INIT-POOL] Final pool sizes:', {
+            '29': pools['29'].length,
+            '39': pools['39'].length,
+            '69': pools['69'].length,
+            total: pools['29'].length + pools['39'].length + pools['69'].length
+        });
 
         res.json({
             success: true,
-            poolSize: exchangePool.length,
-            message: `Pool initialized with ${exchangePool.length} exchanges`
+            pools: {
+                '29': pools['29'].length,
+                '39': pools['39'].length,
+                '69': pools['69'].length
+            },
+            totalCreated: successes,
+            totalFailed: failures,
+            message: `Triple-pool initialized with ${successes} exchanges (${failures} failed)`
         });
     } catch (error) {
-        isReplenishing = false;
-        console.error('❌ Manual init failed:', error);
+        console.error('[INIT-POOL] Manual init failed:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`\n🚀 SimpleSwap Pool Server v5.2.0 (Persistent Pool)`);
+app.listen(PORT, async () => {
+    console.log(`\n🚀 SimpleSwap Triple-Pool Server v6.0.0`);
     console.log(`   Port: ${PORT}`);
-    console.log(`   Mode: HYBRID (pool + on-demand fallback)`);
-    console.log(`   Pool: ${exchangePool.length}/${POOL_SIZE} exchanges loaded`);
+    console.log(`   Mode: TRIPLE-POOL SYSTEM`);
     console.log(`   Storage: ${POOL_FILE}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
-    console.log(`   Product: Beige Sneakers ($${PRODUCT_PRICE_USD})`);
-    console.log(`\n✅ Server started! Exchanges persist across deployments`);
-    console.log(`   ${exchangePool.length > 0 ? 'Pool ready for instant delivery' : 'Use POST /admin/init-pool to fill pool'}\n`);
+
+    try {
+        const pools = await loadPool();
+        console.log(`\n📊 Pool Status:`);
+        console.log(`   $29 Pool: ${pools['29']?.length || 0}/5 (Preorder, no bump)`);
+        console.log(`   $39 Pool: ${pools['39']?.length || 0}/5 (Preorder + Order Bump)`);
+        console.log(`   $69 Pool: ${pools['69']?.length || 0}/5 (Regular, covers $69 and $79)`);
+        const totalSize = (pools['29']?.length || 0) + (pools['39']?.length || 0) + (pools['69']?.length || 0);
+        console.log(`   Total: ${totalSize}/15 exchanges`);
+
+        console.log(`\n✅ Server ready!`);
+        if (totalSize > 0) {
+            console.log(`   Triple-pool system active - instant delivery enabled`);
+        } else {
+            console.log(`   Use POST /admin/init-pool to initialize pools`);
+        }
+    } catch (error) {
+        console.log(`\n⚠️  Could not load pool status`);
+    }
+    console.log('');
 });
 
 process.on('SIGTERM', () => {
