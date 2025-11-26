@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { writeFile, rename, unlink } from 'fs/promises';
@@ -53,15 +52,34 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
 const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
-// Middleware
-app.use(cors({
-    origin: [
-        'https://beigesneaker.netlify.app',
-        'https://fantastic-lokum-6dedef.netlify.app',
-        'https://shepants.netlify.app'
-    ],
-    credentials: true
-}));
+// CORS - allow configured origins with explicit preflight handling
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5500')
+    .split(',')
+    .map(o => o.trim());
+
+console.log(`[CONFIG] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+
+// Explicit CORS middleware that handles preflight properly
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+
+    // Check if origin is allowed (or allow all if wildcard)
+    if (ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.setHeader('Access-Control-Max-Age', '86400');
+    }
+
+    // Handle preflight OPTIONS request
+    if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+    }
+
+    next();
+});
+
 app.use(express.json());
 
 // Lazy-load Playwright only when needed
