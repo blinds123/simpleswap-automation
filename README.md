@@ -1,189 +1,246 @@
 # SimpleSwap Exchange Pool System
 
-Pre-warmed cryptocurrency exchange pool for instant customer checkout.
+**Production-ready cryptocurrency exchange pool for instant TikTok cold traffic checkout.**
 
-## Quick Start
+## Overview
 
-```bash
-# 1. Clone and install
-git clone https://github.com/YOUR_USERNAME/simpleswap-pool.git
-cd simpleswap-pool
-npm install
-
-# 2. Set environment variables (copy .env.example to .env)
-cp .env.example .env
-# Edit .env with your credentials
-
-# 3. Start server locally
-npm start
-
-# 4. Initialize pool
-curl -X POST http://localhost:3000/admin/init-pool
-```
+This system pre-creates SimpleSwap exchanges so customers clicking "Buy Now" get instant checkout without waiting. Features:
+- **Pre-warmed exchange pools** ($19, $29, $59 price points)
+- **Auto-replenishment** - triggers immediately after any exchange is used
+- **BrightData integration** - bypasses Cloudflare protection
+- **File-based locking** - prevents race conditions
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Netlify Site   │────▶│  Render Server   │────▶│   SimpleSwap    │
-│  (Product Page) │     │  (Pool Server)   │     │   (Exchanges)   │
+│  Netlify Site   │────▶│   Render Server  │────▶│   SimpleSwap    │
+│ (Landing Page)  │     │  (Pool Server)   │     │   (Exchanges)   │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
-                               │
-                               ▼
-                        ┌──────────────────┐
-                        │    BrightData    │
-                        │ Scraping Browser │
-                        └──────────────────┘
+        │                       │
+        │                       ▼
+        │                ┌──────────────────┐
+        │                │    BrightData    │
+        │                │ Scraping Browser │
+        │                └──────────────────┘
+        │
+        ▼
+   Customer redirected to SimpleSwap
+   exchange URL with pre-filled wallet
 ```
 
-## Core Components
+## Quick Start (One-Shot Deployment)
 
-| Component | Purpose | File |
-|-----------|---------|------|
-| Pool Server | Express API serving exchanges | `pool-server.js` |
-| Mailosaur OTP | Email verification for Mercuryo | `mailosaur-otp.js` |
-| BrightData | Cloudflare bypass via CDP | Built into pool-server |
+### Prerequisites
+- GitHub account
+- Render.com account (free tier works)
+- BrightData Scraping Browser account
+- Polygon wallet address for receiving payments
 
-## Credentials
-
-### BrightData Scraping Browser
-```
-Customer ID: hl_9d12e57c
-Zone: scraping_browser1
-Password: [SET IN ENV]
-CDP Endpoint: wss://brd-customer-hl_9d12e57c-zone-scraping_browser1:{PASSWORD}@brd.superproxy.io:9222
+### Step 1: Fork Repository
+```bash
+git clone https://github.com/blinds123/simpleswap-exchange-pool.git my-pool
+cd my-pool
 ```
 
-### Mailosaur (Email OTP)
-```
-API Key: qgh1F7IUmlm4TCb5eGpSZa5P0ZkCxgnH
-Server ID: zgk5fexu
-Email Format: {anything}@zgk5fexu.mailosaur.net
+### Step 2: Deploy to Render
+
+1. Go to [render.com](https://render.com) → New → Web Service
+2. Connect your GitHub repo
+3. Use these settings:
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+   - **Instance Type**: Free (or Starter for production)
+
+### Step 3: Configure Environment Variables
+
+Set these in Render Dashboard → Environment:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `BRIGHTDATA_CUSTOMER_ID` | BrightData account | `hl_9d12e57c` |
+| `BRIGHTDATA_ZONE` | Zone name | `scraping_browser1` |
+| `BRIGHTDATA_PASSWORD` | Zone password | `your_password` |
+| `MERCHANT_WALLET` | Your Polygon address | `0xE5173e7c3089bD89cd1341b637b8e1951745ED5C` |
+| `PRICE_POINTS` | Comma-separated prices | `19,29,59` |
+| `POOL_SIZE` | Target pool size | `5` |
+| `MIN_POOL_SIZE` | Minimum before refill | `3` |
+
+### Step 4: Initialize Pools
+```bash
+# After deploy is live, initialize pools:
+curl -X POST https://YOUR-APP.onrender.com/admin/init-pool
 ```
 
-### Merchant Wallet (Polygon)
-```
-Address: 0x1372Ad41B513b9d6eC008086C03d69C635bAE578
-```
+### Step 5: Integrate with Landing Page
+```javascript
+// In your product page checkout button:
+async function handleCheckout(priceUSD) {
+    const response = await fetch('https://YOUR-APP.onrender.com/buy-now', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountUSD: priceUSD })
+    });
 
-### Render Deployment
-```
-URL: https://sparkle-hoodie-pool.onrender.com
+    const data = await response.json();
+
+    if (data.success && data.exchangeUrl) {
+        window.location.href = data.exchangeUrl;
+    } else {
+        console.error('Checkout failed:', data.error);
+    }
+}
 ```
 
 ## API Endpoints
 
-### Public
+### Public Endpoints
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/` | Server status |
-| GET | `/stats` | Pool details with exchange URLs |
-| GET | `/health/pools` | Pool health check |
-| POST | `/buy-now` | Get exchange from pool |
+| `GET` | `/` | Server status |
+| `GET` | `/health/pools` | Pool health with sizes and status |
+| `POST` | `/buy-now` | Get exchange URL (removes from pool) |
 
-### Admin
+### Admin Endpoints
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/admin/init-pool` | Initialize pool (5 exchanges) |
-| POST | `/admin/add-one` | Add single exchange |
-| POST | `/admin/fill-sequential` | Fill pool sequentially |
+| `POST` | `/admin/init-pool` | Create one exchange per pool |
+| `GET` | `/stats` | Detailed pool statistics |
 
-## Common Operations
+### Example Requests
 
 ```bash
-# Check pool status
-curl https://sparkle-hoodie-pool.onrender.com/stats | jq '.pools["25"].exchanges[].exchangeUrl'
+# Check pool health
+curl https://YOUR-APP.onrender.com/health/pools
 
-# Get exchange for customer (removes from pool)
-curl -X POST https://sparkle-hoodie-pool.onrender.com/buy-now \
+# Response:
+{
+  "status": "healthy",
+  "pools": {
+    "19": { "status": "healthy", "size": 5, "target": 5 },
+    "29": { "status": "healthy", "size": 5, "target": 5 },
+    "59": { "status": "healthy", "size": 5, "target": 5 }
+  },
+  "isReplenishing": { "19": false, "29": false, "59": false }
+}
+
+# Get exchange for customer
+curl -X POST https://YOUR-APP.onrender.com/buy-now \
   -H "Content-Type: application/json" \
-  -d '{"amountUSD": 25}'
+  -d '{"amountUSD": 59}'
 
-# Add one new exchange
-curl -X POST https://sparkle-hoodie-pool.onrender.com/admin/add-one
-
-# Initialize fresh pool (clears and creates 5 new)
-curl -X POST https://sparkle-hoodie-pool.onrender.com/admin/init-pool
+# Response:
+{
+  "success": true,
+  "exchangeUrl": "https://simpleswap.io/exchange?id=abc123xyz",
+  "poolStatus": "healthy"
+}
 ```
 
-## Technical Details
+## Auto-Replenishment System
 
-### Exchange Creation Flow
-1. Connect to BrightData CDP (bypasses Cloudflare)
-2. Navigate to: `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=25`
-3. Fill wallet using `getByRole('textbox', {name: /address/i})`
-4. Wait for "Create Exchange" button to be enabled
-5. Click and wait for redirect to `/exchange?id={exchangeId}`
+The pool automatically replenishes **immediately after any exchange is used**:
 
-### Mercuryo OTP Verification Flow
-1. Navigate to exchange URL
-2. Wait for Mercuryo iframe
-3. Select "Credit or debit card"
-4. Enter Mailosaur email
-5. Fetch OTP from Mailosaur API (in email subject)
-6. Enter 5-digit OTP
+1. Customer clicks "Buy Now" → `/buy-now` endpoint called
+2. Exchange URL returned from pool
+3. Pool size drops below target
+4. Auto-replenishment triggers **immediately** (not just at minSize)
+5. New exchange created in background
+6. Pool restored to full capacity
 
-### React Input Handling
-Mercuryo uses React - standard `.fill()` doesn't work:
 ```javascript
-// Correct approach:
-await input.click();
-await page.keyboard.press('Meta+a');
-await input.type(value, { delay: 30 });
-await page.keyboard.press('Tab');
+// Replenishment trigger logic (pool-server.js):
+if (targetPool.length < POOL_CONFIG[poolKey].size) {
+    // Triggers IMMEDIATELY when pool not at full capacity
+    replenishPool(poolKey);
+}
 ```
 
-### Mailosaur OTP Extraction
-```javascript
-// OTP is in subject: "Your verification code is 12345"
-const subjectMatch = message.subject.match(/code\s+is\s+(\d{5})/i);
+## BrightData Configuration
+
+### Getting Credentials
+
+1. Sign up at [brightdata.com](https://brightdata.com)
+2. Create a **Scraping Browser** zone
+3. Copy credentials from zone settings:
+   - Customer ID (starts with `hl_`)
+   - Zone name
+   - Password
+
+### CDP Connection String
+```
+wss://brd-customer-{CUSTOMER_ID}-zone-{ZONE}:{PASSWORD}@brd.superproxy.io:9222
 ```
 
-## Environment Variables
+## File Structure
 
-```bash
-# BrightData
-BRIGHTDATA_CUSTOMER_ID=hl_9d12e57c
-BRIGHTDATA_ZONE=scraping_browser1
-BRIGHTDATA_PASSWORD=your_password
-
-# Merchant
-MERCHANT_WALLET=0x1372Ad41B513b9d6eC008086C03d69C635bAE578
-
-# Pool
-POOL_SIZE=5
-MIN_POOL_SIZE=3
-PORT=3000
 ```
-
-## Deployment
-
-### Render
-1. Create new Web Service
-2. Connect GitHub repo
-3. Set environment variables
-4. Deploy
-
-### Required Render Environment Variables
-- `BRIGHTDATA_CUSTOMER_ID`
-- `BRIGHTDATA_ZONE`
-- `BRIGHTDATA_PASSWORD`
-- `MERCHANT_WALLET`
-- `POOL_SIZE`
-- `MIN_POOL_SIZE`
+├── pool-server.js        # Main server with all endpoints
+├── render.yaml           # Render deployment config
+├── package.json          # Dependencies
+└── README.md             # This file
+```
 
 ## Troubleshooting
 
-### Exchange creation fails
-- Check BrightData credentials
-- Increase timeouts for Render's slow CPU
-- Check SimpleSwap isn't rate-limiting
+### Pools not filling
+- Check BrightData credentials are correct
+- Verify PRICE_POINTS environment variable format: `"19,29,59"`
+- Check Render logs for errors
 
-### OTP not received
-- Verify Mailosaur credentials
-- Check email wasn't sent to wrong address
-- Mercuryo may rate-limit rapid requests
+### Exchange creation slow
+- Normal: 15-30 seconds per exchange on free tier
+- BrightData needs time to bypass Cloudflare
 
-### Button stays disabled
-- React validation needs Tab/blur after input
-- Wait for `waitForFunction` to confirm enabled state
+### `isReplenishing` stuck at true
+- Check for browser automation errors in logs
+- SimpleSwap may be rate-limiting
+- Try manual `/admin/init-pool` call
+
+### Wallet address wrong
+- Update `MERCHANT_WALLET` in Render environment
+- Trigger new deploy
+
+## Testing with Playwright
+
+```javascript
+const { chromium } = require('playwright');
+
+async function testPool() {
+    // Test API endpoint
+    const response = await fetch('https://YOUR-APP.onrender.com/buy-now', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountUSD: 59 })
+    });
+
+    const data = await response.json();
+    console.log('Success:', data.success);
+    console.log('URL:', data.exchangeUrl);
+
+    // Verify URL works
+    const browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.goto(data.exchangeUrl);
+
+    const isSimpleSwap = page.url().includes('simpleswap.io');
+    console.log('Valid SimpleSwap page:', isSimpleSwap);
+
+    await browser.close();
+}
+```
+
+## Production Checklist
+
+- [ ] BrightData credentials set in Render
+- [ ] Correct wallet address configured
+- [ ] PRICE_POINTS matches landing page buttons
+- [ ] Pools initialized (5+ exchanges each)
+- [ ] Landing page checkout integrated
+- [ ] E2E test passing
+
+## License
+
+MIT

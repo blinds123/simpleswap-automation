@@ -1,63 +1,45 @@
-/**
- * SimpleSwap Exchange Pool Server
- *
- * Pre-creates cryptocurrency exchanges on simpleswap.io and serves them instantly.
- * Uses BrightData Scraping Browser to bypass Cloudflare protection.
- *
- * CONFIGURABLE PRICE POINTS: Set PRICE_POINTS env var (e.g., "25,35,50")
- * Each price point maintains its own pool of 5 exchanges.
- *
- * @version 4.0.0
- * @description Multi-pool exchange server with configurable price points
- */
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { readFile, writeFile, rename, unlink } from 'fs/promises';
+import fs from 'fs';
+import { writeFile, rename, unlink } from 'fs/promises';
 import path from 'path';
+import lockfile from 'proper-lockfile';
 import { randomBytes } from 'crypto';
-import { existsSync } from 'fs';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ============================================================================
-// CONFIGURATION - CONFIGURABLE PRICE POINTS
-// ============================================================================
-
+// Configuration
 const MERCHANT_WALLET = process.env.MERCHANT_WALLET || "0x1372Ad41B513b9d6eC008086C03d69C635bAE578";
-const POOL_SIZE_PER_PRICE = parseInt(process.env.POOL_SIZE_PER_PRICE) || 5;
-const MIN_POOL_SIZE = parseInt(process.env.MIN_POOL_SIZE) || 3;
-const DISK_SYNC_INTERVAL = 5000; // 5 seconds
+const POOL_SIZE = parseInt(process.env.POOL_SIZE) || 10;
+const MIN_POOL_SIZE_DEFAULT = parseInt(process.env.MIN_POOL_SIZE) || 3;
+const PRODUCT_PRICE_USD = parseInt(process.env.PRODUCT_PRICE_USD) || 25;
 
-// Parse price points from environment variable
-// Format: PRICE_POINTS=25,35,50 (comma-separated USD amounts)
-const PRICE_POINTS = (process.env.PRICE_POINTS || '25')
+// Parse price points from environment variable (default: 19,29,59)
+const PRICE_POINTS = (process.env.PRICE_POINTS || '19,29,59')
     .split(',')
     .map(p => parseInt(p.trim()))
     .filter(p => !isNaN(p) && p > 0);
 
-if (PRICE_POINTS.length === 0) {
-    console.error('ERROR: No valid price points configured. Set PRICE_POINTS env var (e.g., "25,35,50")');
-    process.exit(1);
-}
-
-// Build pool configuration dynamically from price points
-const POOL_CONFIG = {};
-PRICE_POINTS.forEach(price => {
-    POOL_CONFIG[String(price)] = {
-        size: POOL_SIZE_PER_PRICE,
-        minSize: MIN_POOL_SIZE,
-        amount: price,
-        description: `$${price} exchange pool`
-    };
-});
+console.log(`[CONFIG] Price points configured: ${PRICE_POINTS.join(', ')}`);
 
 // Persistent storage file
 const POOL_FILE = path.join(process.cwd(), 'exchange-pool.json');
+
+// Dynamic pool configuration based on PRICE_POINTS
+const POOL_CONFIG = {};
+PRICE_POINTS.forEach((price, index) => {
+  const descriptions = ['Pre-order only', 'Pre-order + Order Bump', 'Ship Today'];
+  POOL_CONFIG[String(price)] = {
+    size: 5,
+    minSize: MIN_POOL_SIZE_DEFAULT,
+    amount: price,
+    description: descriptions[index] || `$${price} pool`
+  };
+});
 
 // BrightData credentials
 const BRIGHTDATA_CUSTOMER_ID = process.env.BRIGHTDATA_CUSTOMER_ID;
@@ -65,113 +47,24 @@ const BRIGHTDATA_ZONE = process.env.BRIGHTDATA_ZONE;
 const BRIGHTDATA_PASSWORD = process.env.BRIGHTDATA_PASSWORD;
 
 if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
-    console.warn('WARNING: Missing BrightData credentials - exchange creation will not work');
+    console.warn('⚠️  Missing BrightData credentials - on-demand creation will not work');
 }
 
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
 const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
-// CORS - allow configured origins
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5500')
-    .split(',')
-    .map(o => o.trim());
-
+// Middleware
 app.use(cors({
-    origin: ALLOWED_ORIGINS,
+    origin: [
+        'https://beigesneaker.netlify.app',
+        'https://fantastic-lokum-6dedef.netlify.app',
+        'https://shepants.netlify.app'
+    ],
     credentials: true
 }));
-app.use(express.json({ limit: '1kb' }));
+app.use(express.json());
 
-// ============================================================================
-// IN-MEMORY POOL CACHE - MULTI-PRICE-POINT SUPPORT
-// ============================================================================
-
-// Initialize memory pool with all configured price points
-let memoryPool = {};
-PRICE_POINTS.forEach(price => {
-    memoryPool[String(price)] = [];
-});
-
-let isDirty = false;
-let isSyncing = false;
-
-// Per-pool replenishment locks
-const replenishmentLock = {};
-PRICE_POINTS.forEach(price => {
-    replenishmentLock[String(price)] = false;
-});
-
-/**
- * Loads pool from disk into memory on startup
- */
-async function loadPoolIntoMemory() {
-    try {
-        if (existsSync(POOL_FILE)) {
-            const data = await readFile(POOL_FILE, 'utf8');
-            const pools = JSON.parse(data);
-
-            // Ensure all configured price points exist in loaded data
-            PRICE_POINTS.forEach(price => {
-                const key = String(price);
-                if (!pools[key]) pools[key] = [];
-            });
-
-            memoryPool = pools;
-
-            const summary = PRICE_POINTS.map(p => `$${p}: ${memoryPool[String(p)].length}`).join(', ');
-            console.log(`[MEMORY-POOL] Loaded from disk: ${summary}`);
-            return memoryPool;
-        } else {
-            console.log('[MEMORY-POOL] No existing pool file, starting with empty pools');
-            return memoryPool;
-        }
-    } catch (error) {
-        console.error('[MEMORY-POOL] Failed to load pool:', error.message);
-        return memoryPool;
-    }
-}
-
-/**
- * Syncs in-memory pool to disk asynchronously (atomic writes)
- */
-async function syncPoolToDisk() {
-    if (!isDirty || isSyncing) return;
-
-    isSyncing = true;
-    const tempFile = `${POOL_FILE}.${randomBytes(8).toString('hex')}.tmp`;
-
-    try {
-        await writeFile(tempFile, JSON.stringify(memoryPool, null, 2), 'utf8');
-        await rename(tempFile, POOL_FILE);
-        isDirty = false;
-
-        const summary = PRICE_POINTS.map(p => `$${p}: ${memoryPool[String(p)].length}`).join(', ');
-        console.log(`[DISK-SYNC] Synced: ${summary}`);
-    } catch (error) {
-        console.error('[DISK-SYNC] Failed:', error.message);
-        try { await unlink(tempFile); } catch (e) {}
-    } finally {
-        isSyncing = false;
-    }
-}
-
-/**
- * Periodic disk sync - runs every 5 seconds if pool is dirty
- */
-function startPeriodicDiskSync() {
-    setInterval(() => {
-        if (isDirty && !isSyncing) {
-            syncPoolToDisk().catch(err =>
-                console.error('[PERIODIC-SYNC] Failed:', err.message)
-            );
-        }
-    }, DISK_SYNC_INTERVAL);
-}
-
-// ============================================================================
-// LAZY-LOAD PLAYWRIGHT
-// ============================================================================
-
+// Lazy-load Playwright only when needed
 let chromium = null;
 async function getChromium() {
     if (!chromium) {
@@ -181,16 +74,11 @@ async function getChromium() {
     return chromium;
 }
 
-// ============================================================================
-// EXCHANGE CREATION - SUPPORTS ANY PRICE POINT
-// ============================================================================
-
 /**
- * Creates a SimpleSwap exchange for specified amount
- * @param {number} amountUSD - The USD amount for the exchange
- * @param {string} walletAddress - Destination wallet address
+ * Creates a SimpleSwap exchange on-demand (no pool)
+ * Uses BrightData Scraping Browser with quote verification
  */
-async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
+async function createExchange(amountUSD = PRODUCT_PRICE_USD, walletAddress = MERCHANT_WALLET) {
     console.log(`[CREATE-EXCHANGE] Creating exchange for $${amountUSD}...`);
 
     const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
@@ -198,76 +86,86 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     let browser;
     try {
         const chromiumInstance = await getChromium();
-
+        
         console.log(`[${new Date().toISOString()}] Connecting to BrightData CDP...`);
         browser = await chromiumInstance.connectOverCDP(CDP_ENDPOINT);
-
+        
         const context = browser.contexts()[0];
         const page = context.pages()[0] || await context.newPage();
 
-        // Block heavy resources for performance
-        await page.route('**/*.{png,jpg,jpeg,gif,webp,svg}', route => route.abort());
-
+        // OPTIMIZATION: Block heavy resources for Render 0.5 CPU
+        await page.route('**/*.{png,jpg,jpeg,gif,webp,svg,css,woff,woff2}', route => route.abort());
+        
+        // Set a robust timeout for navigation (120s for Render Starter CPU)
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
         console.log(`[${new Date().toISOString()}] Page loaded`);
 
-        // Remove popups/banners
+        // 1. Hydration & Nuke
+        // Removed fixed wait - rely on selector timeout
         await page.evaluate(() => {
             document.querySelectorAll('[data-testid="info-message"], [role="alert"], .cookies-banner').forEach(el => el.remove());
         });
 
-        // Fill wallet address
-        console.log(`[${new Date().toISOString()}] Filling wallet...`);
+        // 2. Fill Wallet using accessibility locator
+        console.log(`[${new Date().toISOString()}] Filling wallet using getByRole...`);
         const addressInput = page.getByRole('textbox', { name: /address/i });
+        // Increase timeout for first selector (cold start protection)
         await addressInput.first().fill(walletAddress, { timeout: 30000 });
-        console.log(`[${new Date().toISOString()}] Address filled`);
-
-        await page.waitForTimeout(2000);
+        console.log(`[${new Date().toISOString()}] ✓ Address filled using accessibility locator`);
+        
+        await page.waitForTimeout(2000); // Small delay for React state update
         await addressInput.first().press('Enter');
 
-        // Wait for quote calculation
-        console.log(`[${new Date().toISOString()}] Waiting for quote...`);
+        // 3. CRITICAL: Wait for Quote (The "You get" amount)
+        // This ensures the backend has validated the pair and calculated the rate
+        console.log(`[${new Date().toISOString()}] Waiting for quote calculation...`);
         try {
+            // Look for the second input (You Get) and wait for it to have a value
             await page.waitForFunction(() => {
                 const inputs = document.querySelectorAll('input[type="text"]');
                 if (inputs.length < 2) return false;
-                const val = inputs[1].value;
+                const val = inputs[1].value; // The "You Get" input
                 return val && val.length > 0 && val !== '0' && !val.includes('...');
-            }, { timeout: 30000 });
-            console.log(`[${new Date().toISOString()}] Quote received`);
+            }, { timeout: 30000 }); // Increased from 15s
+            console.log(`[${new Date().toISOString()}] Quote received!`);
         } catch (e) {
-            console.log(`[${new Date().toISOString()}] Quote timeout (continuing anyway)`);
+            console.log(`[${new Date().toISOString()}] ⚠️ Warning: Quote timeout (might still work)`);
         }
 
-        // Wait for button to be enabled
-        console.log(`[${new Date().toISOString()}] Waiting for button...`);
+        // 4. Wait for button to be enabled, then click
+        console.log(`[${new Date().toISOString()}] Waiting for button to be enabled...`);
         const createButton = page.getByRole('button', { name: /^create.*exchange$/i });
 
+        // CRITICAL: Wait for React validation to enable the button
         await page.waitForFunction(
             () => {
                 const buttons = Array.from(document.querySelectorAll('button'));
                 const createBtn = buttons.find(b => /^create.*exchange$/i.test(b.textContent?.trim() || ''));
                 return createBtn && !createBtn.disabled;
             },
-            { timeout: 40000 }
+            { timeout: 40000 } // Increased timeout for Render CPU
         );
 
         const isDisabled = await createButton.first().isDisabled();
+        console.log(`[${new Date().toISOString()}] Button disabled: ${isDisabled}`);
+
         if (!isDisabled) {
             await createButton.first().click({ timeout: 10000 });
-            console.log(`[${new Date().toISOString()}] Button clicked`);
-
-            // Double click strategy for reliability
+            console.log(`[${new Date().toISOString()}] ✓ Button clicked using accessibility locator`);
+            
+            // DOUBLE CLICK STRATEGY: Wait and click again if not redirected
+            // This handles cases where the first click just focuses or clears an overlay
             await page.waitForTimeout(2000);
             if (page.url().includes('/exchange?')) {
-                await createButton.first().click({ force: true });
+                 console.log(`[${new Date().toISOString()}] Still on page, clicking create again...`);
+                 await createButton.first().click({ force: true });
             }
-        } else {
-            throw new Error('Button still disabled after waiting');
-        }
 
-        // Wait for redirect to exchange page
-        console.log(`[${new Date().toISOString()}] Waiting for redirect...`);
+        } else {
+            throw new Error('Button still disabled after waiting for enablement');
+        }
+        
+        console.log(`[${new Date().toISOString()}] Clicked create, waiting for redirect...`);
         await page.waitForURL(/\/exchange\?id=/, { timeout: 120000 });
 
         const exchangeUrl = page.url();
@@ -275,7 +173,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
 
         if (!exchangeId) throw new Error('No exchange ID in URL');
 
-        console.log(`[CREATE-EXCHANGE] Created: ${exchangeId} for $${amountUSD}`);
+        console.log(`[CREATE-EXCHANGE] ✓ Created: ${exchangeId} for $${amountUSD}`);
 
         return {
             id: exchangeId,
@@ -286,516 +184,525 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
         };
 
     } catch (error) {
-        console.error(`[${new Date().toISOString()}] Failed:`, error.message);
+        console.error(`[${new Date().toISOString()}] ✗ Failed:`, error.message);
         throw error;
     } finally {
-        if (browser) {
-            try { await browser.close(); } catch (e) {}
-        }
+        if (browser) await browser.close();
     }
 }
 
-// ============================================================================
-// POOL MANAGEMENT - MULTI-PRICE-POINT SUPPORT
-// ============================================================================
+// Exchange pool with persistence
+let exchangePool = [];
+let isReplenishing = false;
 
-/**
- * Replenishes a specific price point pool
- * @param {string} priceKey - The price point key (e.g., "25")
- */
-async function replenishPool(priceKey) {
-    if (replenishmentLock[priceKey]) {
-        console.log(`[REPLENISH-${priceKey}] Already replenishing, skipping`);
-        return;
-    }
+// Replenishment locks - prevents concurrent replenishment of same pool (dynamic)
+const replenishmentLocks = {};
+PRICE_POINTS.forEach(price => {
+  replenishmentLocks[String(price)] = false;
+});
 
-    replenishmentLock[priceKey] = true;
-    console.log(`[REPLENISH-${priceKey}] Starting replenishment...`);
+// Create empty pool structure based on PRICE_POINTS
+function createEmptyPools() {
+    const pools = {};
+    PRICE_POINTS.forEach(price => {
+        pools[String(price)] = [];
+    });
+    return pools;
+}
 
+// Load pool from file on startup
+async function loadPool() {
     try {
-        const config = POOL_CONFIG[priceKey];
-        if (!config) {
-            console.error(`[REPLENISH-${priceKey}] Invalid price point`);
-            return;
-        }
+        if (fs.existsSync(POOL_FILE)) {
+            const data = fs.readFileSync(POOL_FILE, 'utf8');
+            const pools = JSON.parse(data);
 
-        const currentSize = memoryPool[priceKey]?.length || 0;
-        const needed = config.size - currentSize;
+            // Validate structure - ensure all configured pools exist
+            PRICE_POINTS.forEach(price => {
+                if (!pools[String(price)]) pools[String(price)] = [];
+            });
 
-        if (needed <= 0) {
-            console.log(`[REPLENISH-${priceKey}] Pool already full`);
-            return;
-        }
-
-        console.log(`[REPLENISH-${priceKey}] Creating ${needed} exchanges...`);
-
-        // Create sequentially to avoid overwhelming BrightData
-        let created = 0;
-        for (let i = 0; i < needed; i++) {
-            try {
-                const exchange = await createExchange(config.amount);
-                memoryPool[priceKey].push({ ...exchange, amount: config.amount });
-                isDirty = true;
-                created++;
-                console.log(`[REPLENISH-${priceKey}] Created ${created}/${needed}`);
-
-                // Small delay between creations
-                if (i < needed - 1) {
-                    await new Promise(r => setTimeout(r, 2000));
-                }
-            } catch (error) {
-                console.error(`[REPLENISH-${priceKey}] Failed ${i + 1}/${needed}:`, error.message);
-            }
-        }
-
-        if (created > 0) {
-            await syncPoolToDisk();
-            console.log(`[REPLENISH-${priceKey}] Pool now: ${memoryPool[priceKey].length}/${config.size}`);
+            return pools;
+        } else {
+            console.log('[LOAD-POOL] No existing pool file, returning empty structure');
+            return createEmptyPools();
         }
     } catch (error) {
-        console.error(`[REPLENISH-${priceKey}] Failed:`, error.message);
-    } finally {
-        replenishmentLock[priceKey] = false;
+        console.error('[LOAD-POOL] Failed to load pool:', error.message);
+        return createEmptyPools();
     }
 }
 
-/**
- * Gets the pool key for an amount (exact match required)
- */
-function getPoolKey(amountUSD) {
-    const amount = parseInt(amountUSD);
-    const key = String(amount);
-    if (POOL_CONFIG[key]) return key;
-    return null;
-}
-
-// ============================================================================
-// API ENDPOINTS
-// ============================================================================
-
-/**
- * Root endpoint - shows all pools status
- */
-app.get('/', (req, res) => {
-    const pools = {};
-    let totalSize = 0;
-    let totalMax = 0;
-
+// Save pool to file with atomic writes
+async function savePool(pools) {
+    // Validate structure before saving - ensure all configured pools exist
     PRICE_POINTS.forEach(price => {
-        const key = String(price);
-        const size = memoryPool[key]?.length || 0;
-        pools[key] = size;
-        totalSize += size;
-        totalMax += POOL_SIZE_PER_PRICE;
+        if (!pools[String(price)]) pools[String(price)] = [];
     });
 
+    // Write to temporary file first
+    const tempFile = `${POOL_FILE}.${randomBytes(8).toString('hex')}.tmp`;
+
+    try {
+        await writeFile(tempFile, JSON.stringify(pools, null, 2), 'utf8');
+
+        // Atomic rename (if process crashes after this, file is safe)
+        await rename(tempFile, POOL_FILE);
+
+        const poolSizes = {};
+        PRICE_POINTS.forEach(price => {
+            poolSizes[String(price)] = pools[String(price)].length;
+        });
+        console.log('[SAVE-POOL] Pool saved:', poolSizes);
+    } catch (error) {
+        // Clean up temp file if it exists
+        try {
+            await unlink(tempFile);
+        } catch (unlinkError) {
+            // Ignore unlink errors
+        }
+        throw error;
+    }
+}
+
+// Normalize amount to pool key (dynamic based on PRICE_POINTS)
+function normalizeAmount(amountUSD) {
+    const amount = parseInt(amountUSD);
+
+    // Check if amount matches any configured price point
+    if (PRICE_POINTS.includes(amount)) {
+        return String(amount);
+    }
+
+    // Reject invalid amounts
+    throw new Error(`Invalid amount: $${amount}. Expected: ${PRICE_POINTS.join(', ')}`);
+}
+
+// Helper to get pool sizes dynamically
+function getPoolSizes(pools) {
+    const sizes = {};
+    let total = 0;
+    PRICE_POINTS.forEach(price => {
+        const key = String(price);
+        const size = pools[key]?.length || 0;
+        sizes[key] = size;
+        total += size;
+    });
+    return { sizes, total };
+}
+
+// Root endpoint
+app.get('/', async (req, res) => {
+    const pools = await loadPool();
+    const { sizes, total } = getPoolSizes(pools);
+
     res.json({
-        service: 'SimpleSwap Exchange Pool Server',
+        service: 'SimpleSwap Dynamic Pool Server [PRODUCTION]',
         status: 'running',
-        version: '4.0.0',
-        mode: 'multi-pool',
-        pricePoints: PRICE_POINTS,
-        pools,
-        totalSize,
-        maxSize: totalMax,
-        poolSizePerPrice: POOL_SIZE_PER_PRICE,
-        performance: {
-            avgResponseTime: '<50ms',
-            diskSync: `Every ${DISK_SYNC_INTERVAL / 1000}s`
-        },
-        note: totalSize > 0
-            ? 'Pool ready - instant delivery from memory'
-            : 'Use POST /admin/init-pool to initialize'
+        version: '11.0.0',
+        mode: 'dynamic-pool',
+        configuredPrices: PRICE_POINTS,
+        pools: sizes,
+        totalSize: total,
+        totalMaxSize: PRICE_POINTS.length * 5,
+        note: total > 0
+            ? `Pool system ready - instant delivery for $${PRICE_POINTS.join(', $')}`
+            : 'Use POST /admin/init-pool to initialize pools'
     });
 });
 
-/**
- * Health check
- */
+// Health check
 app.get('/health', (req, res) => {
-    const allHealthy = PRICE_POINTS.every(price => {
-        const key = String(price);
-        return (memoryPool[key]?.length || 0) >= MIN_POOL_SIZE;
-    });
-
     res.json({
-        status: allHealthy ? 'healthy' : 'degraded',
-        pricePoints: PRICE_POINTS,
+        status: 'healthy',
+        mode: 'triple-pool',
         timestamp: new Date().toISOString()
     });
 });
 
-/**
- * Detailed pool stats
- */
-app.get('/stats', (req, res) => {
-    const pools = {};
-    let totalSize = 0;
+// Pool health check endpoint
+app.get('/health/pools', async (req, res) => {
+    try {
+        const pools = await loadPool();
+        const health = {};
+        let overallStatus = 'healthy';
 
-    PRICE_POINTS.forEach(price => {
-        const key = String(price);
-        const config = POOL_CONFIG[key];
-        pools[key] = {
-            description: config.description,
-            size: memoryPool[key]?.length || 0,
-            maxSize: config.size,
-            minSize: config.minSize,
-            exchanges: memoryPool[key] || []
-        };
-        totalSize += memoryPool[key]?.length || 0;
-    });
+        for (const [key, config] of Object.entries(POOL_CONFIG)) {
+            const poolSize = pools[key]?.length || 0;
+            const status = poolSize >= config.minSize ? 'healthy' : poolSize > 0 ? 'low' : 'empty';
 
-    res.json({
-        pricePoints: PRICE_POINTS,
-        pools,
-        totalSize,
-        totalMaxSize: PRICE_POINTS.length * POOL_SIZE_PER_PRICE
-    });
+            if (status !== 'healthy') {
+                overallStatus = 'degraded';
+            }
+
+            health[key] = {
+                status,
+                size: poolSize,
+                target: config.size,
+                minSize: config.minSize,
+                description: config.description
+            };
+        }
+
+        res.json({
+            status: overallStatus,
+            pools: health,
+            isReplenishing: Object.fromEntries(
+                Object.keys(POOL_CONFIG).map(key => [key, replenishmentLocks[key] || false])
+            ),
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
 });
 
-/**
- * BUY NOW - Get exchange from pool
- */
-app.post('/buy-now', async (req, res) => {
-    const startTime = Date.now();
+// Replenishment function with concurrency control
+async function replenishPool(poolKey) {
+    // Check if already replenishing this pool
+    if (replenishmentLocks[poolKey]) {
+        console.log(`[REPLENISH] Pool ${poolKey} already replenishing, skipping`);
+        return;
+    }
 
+    // Acquire replenishment lock
+    replenishmentLocks[poolKey] = true;
+    console.log(`[REPLENISH] Starting replenishment for pool ${poolKey}`);
+
+    try {
+        const pools = await loadPool();
+        const targetPool = pools[poolKey];
+        const config = POOL_CONFIG[poolKey];
+
+        if (!targetPool) {
+            console.error(`[REPLENISH] Pool ${poolKey} does not exist!`);
+            return;
+        }
+
+        // Re-check pool size (might have been replenished by another process)
+        const needed = config.size - targetPool.length;
+        if (needed <= 0) {
+            console.log(`[REPLENISH] Pool ${poolKey} already full (${targetPool.length}/${config.size}), aborting`);
+            return;
+        }
+
+        console.log(`[REPLENISH] Creating ${needed} exchanges for pool ${poolKey} in parallel`);
+
+        // Create all needed exchanges in parallel for speed
+        const promises = [];
+        for (let i = 0; i < needed; i++) {
+            promises.push(
+                createExchange(config.amount)
+                    .then(exchange => {
+                        exchange.amount = config.amount;
+                        return exchange;
+                    })
+                    .catch(error => {
+                        console.error(`[REPLENISH] Failed exchange ${i+1}/${needed} for pool ${poolKey}:`, error);
+                        return null; // Return null for failed exchanges
+                    })
+            );
+        }
+
+        // Wait for all exchanges to be created
+        const results = await Promise.all(promises);
+        const validExchanges = results.filter(e => e !== null);
+
+        console.log(`[REPLENISH] Created ${validExchanges.length}/${needed} exchanges successfully`);
+
+        // Acquire file lock for atomic save
+        let release;
+        try {
+            release = await lockfile.lock(POOL_FILE, {
+                retries: { retries: 5, minTimeout: 200, maxTimeout: 1000 }
+            });
+
+            // Re-load pool to get latest state
+            const freshPools = await loadPool();
+            freshPools[poolKey].push(...validExchanges);
+
+            await savePool(freshPools);
+            await release();
+
+            console.log(`[REPLENISH] Pool ${poolKey} now has ${freshPools[poolKey].length}/${config.size} exchanges`);
+
+        } catch (lockError) {
+            if (release) await release();
+            console.error(`[REPLENISH] Failed to acquire lock for saving:`, lockError);
+            // Exchanges are lost, but pool will replenish on next request
+        }
+
+    } catch (error) {
+        console.error(`[REPLENISH] Replenishment failed for pool ${poolKey}:`, error);
+    } finally {
+        // Always release replenishment lock
+        replenishmentLocks[poolKey] = false;
+        console.log(`[REPLENISH] Replenishment lock released for pool ${poolKey}`);
+    }
+}
+
+// Buy now endpoint - uses pool if available, otherwise on-demand
+app.post('/buy-now', async (req, res) => {
     try {
         const { amountUSD } = req.body;
 
+        // Validate input
         if (!amountUSD) {
             return res.status(400).json({
                 success: false,
-                error: 'Missing required parameter: amountUSD',
-                availablePrices: PRICE_POINTS
+                error: 'Missing required parameter: amountUSD'
             });
         }
 
-        const poolKey = getPoolKey(amountUSD);
-        if (!poolKey) {
+        const amount = parseInt(amountUSD);
+        if (isNaN(amount) || !PRICE_POINTS.includes(amount)) {
             return res.status(400).json({
                 success: false,
-                error: `Invalid amount: $${amountUSD}. Available: $${PRICE_POINTS.join(', $')}`,
-                availablePrices: PRICE_POINTS
+                error: `Invalid amount: $${amountUSD}. Expected: ${PRICE_POINTS.join(', ')}`
             });
         }
 
-        console.log(`[BUY-NOW] Request for $${amountUSD}`);
+        console.log(`[BUY-NOW] Request received for amount: $${amountUSD}`);
 
-        // FAST PATH: Get from memory pool
-        if (memoryPool[poolKey] && memoryPool[poolKey].length > 0) {
-            const exchange = memoryPool[poolKey].shift();
-            isDirty = true;
+        // Normalize amount to pool key
+        const poolKey = normalizeAmount(amountUSD);
+        console.log(`[BUY-NOW] Normalized to pool key: ${poolKey}`);
 
-            const responseTime = Date.now() - startTime;
-            console.log(`[BUY-NOW] Delivered: ${exchange.exchangeId} (${responseTime}ms)`);
-            console.log(`[BUY-NOW] $${poolKey} remaining: ${memoryPool[poolKey].length}`);
-
-            // Async replenishment if below minimum
-            if (memoryPool[poolKey].length < POOL_CONFIG[poolKey].minSize) {
-                setImmediate(() => {
-                    replenishPool(poolKey).catch(err =>
-                        console.error('[BUY-NOW] Replenishment failed:', err.message)
-                    );
-                });
-            }
-
-            // Async disk sync
-            setImmediate(() => {
-                syncPoolToDisk().catch(err =>
-                    console.error('[BUY-NOW] Disk sync failed:', err.message)
-                );
+        // CRITICAL: Acquire file lock for atomic read-modify-write
+        let release;
+        let lockReleased = false; // Track if lock has been released
+        try {
+            release = await lockfile.lock(POOL_FILE, {
+                retries: { retries: 10, minTimeout: 100, maxTimeout: 1000 }
             });
-
+        } catch (lockError) {
+            console.error(`[BUY-NOW] Failed to acquire lock:`, lockError);
+            // Fallback to on-demand if lock fails
+            const exchange = await createExchange(parseInt(poolKey));
             return res.json({
                 success: true,
                 exchangeUrl: exchange.exchangeUrl,
-                amount: parseInt(poolKey),
-                responseTime: `${responseTime}ms`,
-                source: 'pool'
+                poolStatus: 'on-demand-lock-failed'
             });
         }
 
-        // SLOW PATH: Create on-demand
-        console.log(`[BUY-NOW] Pool empty for $${poolKey}, creating on-demand...`);
-        const exchange = await createExchange(parseInt(poolKey));
+        try {
+            const pools = await loadPool();
+            const targetPool = pools[poolKey];
 
-        // Trigger async replenishment
-        setImmediate(() => {
-            replenishPool(poolKey).catch(err =>
-                console.error('[BUY-NOW] Background replenishment failed:', err.message)
-            );
-        });
+            if (!targetPool || targetPool.length === 0) {
+                console.log(`[BUY-NOW] Pool ${poolKey} empty, creating on-demand`);
+                await release(); // Release lock before slow operation
+                lockReleased = true;
+                const exchange = await createExchange(parseInt(poolKey));
 
-        const responseTime = Date.now() - startTime;
-        return res.json({
-            success: true,
-            exchangeUrl: exchange.exchangeUrl,
-            amount: parseInt(poolKey),
-            responseTime: `${responseTime}ms`,
-            source: 'on-demand'
-        });
+                // Trigger replenishment in background
+                replenishPool(poolKey).catch(err =>
+                    console.error(`[BUY-NOW] Background replenishment failed:`, err)
+                );
+
+                return res.json({
+                    success: true,
+                    exchangeUrl: exchange.exchangeUrl,
+                    poolStatus: 'on-demand'
+                });
+            }
+
+            // Get exchange from specific pool
+            const exchange = targetPool.shift();
+            console.log(`[BUY-NOW] Delivered exchange from pool ${poolKey}: ${exchange.exchangeId || exchange.id}`);
+            console.log(`[BUY-NOW] Remaining in pool ${poolKey}: ${targetPool.length}`);
+
+            await savePool(pools);
+            await release(); // Release lock ASAP
+            lockReleased = true;
+
+            // Trigger replenishment IMMEDIATELY after any exchange is used
+            if (targetPool.length < POOL_CONFIG[poolKey].size) {
+                console.log(`[BUY-NOW] Pool ${poolKey} not full (${targetPool.length}/${POOL_CONFIG[poolKey].size}), triggering immediate replenishment`);
+                replenishPool(poolKey).catch(err =>
+                    console.error(`[BUY-NOW] Replenishment failed:`, err)
+                );
+            }
+
+            res.json({
+                success: true,
+                exchangeUrl: exchange.exchangeUrl,
+                poolStatus: 'instant'
+            });
+
+        } catch (error) {
+            // Only release if not already released
+            if (!lockReleased && release) {
+                try {
+                    await release();
+                } catch (releaseError) {
+                    console.error(`[BUY-NOW] Error releasing lock:`, releaseError.message);
+                }
+            }
+            throw error;
+        }
 
     } catch (error) {
-        console.error('[BUY-NOW] Error:', error.message);
-        res.status(500).json({ success: false, error: error.message });
+        console.error('[BUY-NOW] Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
-/**
- * Admin: Initialize all pools
- */
-app.post('/admin/init-pool', async (req, res) => {
-    const { pricePoint } = req.body;
+// Stats endpoint
+app.get('/stats', async (req, res) => {
+    const pools = await loadPool();
 
-    // If specific price point requested
-    if (pricePoint) {
-        const key = String(pricePoint);
-        if (!POOL_CONFIG[key]) {
-            return res.status(400).json({
-                success: false,
-                error: `Invalid price point: $${pricePoint}. Available: $${PRICE_POINTS.join(', $')}`
-            });
-        }
-
-        if (replenishmentLock[key]) {
-            return res.json({ success: false, error: `$${key} pool already initializing` });
-        }
-
-        replenishmentLock[key] = true;
-        memoryPool[key] = [];
-
-        try {
-            const config = POOL_CONFIG[key];
-            console.log(`[INIT-POOL] Initializing $${key} pool with ${config.size} exchanges...`);
-
-            for (let i = 0; i < config.size; i++) {
-                try {
-                    const exchange = await createExchange(config.amount);
-                    memoryPool[key].push({ ...exchange, amount: config.amount });
-                    console.log(`[INIT-POOL] $${key}: ${memoryPool[key].length}/${config.size}`);
-                    if (i < config.size - 1) await new Promise(r => setTimeout(r, 2000));
-                } catch (error) {
-                    console.error(`[INIT-POOL] $${key} failed:`, error.message);
-                }
-            }
-
-            isDirty = true;
-            await syncPoolToDisk();
-            replenishmentLock[key] = false;
-
-            return res.json({
-                success: true,
-                pricePoint: parseInt(key),
-                created: memoryPool[key].length,
-                target: config.size
-            });
-        } catch (error) {
-            replenishmentLock[key] = false;
-            return res.status(500).json({ success: false, error: error.message });
-        }
-    }
-
-    // Initialize all pools
-    const results = {};
-    for (const price of PRICE_POINTS) {
-        const key = String(price);
-        if (replenishmentLock[key]) {
-            results[key] = { skipped: true, reason: 'already initializing' };
-            continue;
-        }
-
-        replenishmentLock[key] = true;
-        memoryPool[key] = [];
-
-        const config = POOL_CONFIG[key];
-        console.log(`[INIT-POOL] Initializing $${key}...`);
-
-        let created = 0;
-        for (let i = 0; i < config.size; i++) {
-            try {
-                const exchange = await createExchange(config.amount);
-                memoryPool[key].push({ ...exchange, amount: config.amount });
-                created++;
-                console.log(`[INIT-POOL] $${key}: ${created}/${config.size}`);
-                if (i < config.size - 1) await new Promise(r => setTimeout(r, 2000));
-            } catch (error) {
-                console.error(`[INIT-POOL] $${key} failed:`, error.message);
-            }
-        }
-
-        results[key] = { created, target: config.size };
-        replenishmentLock[key] = false;
-    }
-
-    isDirty = true;
-    await syncPoolToDisk();
-
+    const poolsData = {};
+    let totalSize = 0;
+    let totalMaxSize = 0;
+    Object.entries(POOL_CONFIG).forEach(([key, config]) => {
+        poolsData[key] = {
+            description: config.description,
+            size: pools[key] ? pools[key].length : 0,
+            maxSize: config.size,
+            minSize: config.minSize,
+            exchanges: pools[key] || []
+        };
+        totalSize += pools[key]?.length || 0;
+        totalMaxSize += config.size;
+    });
     res.json({
-        success: true,
-        results,
-        message: 'All pools initialized'
+        pools: poolsData,
+        totalSize,
+        totalMaxSize
     });
 });
 
-/**
- * Admin: Add single exchange to specific pool
- */
-app.post('/admin/add-one', async (req, res) => {
-    const { pricePoint } = req.body;
-    const key = pricePoint ? String(pricePoint) : PRICE_POINTS[0].toString();
-
-    if (!POOL_CONFIG[key]) {
-        return res.status(400).json({
-            success: false,
-            error: `Invalid price point: $${key}. Available: $${PRICE_POINTS.join(', $')}`
-        });
-    }
-
+// Admin endpoint - directly seed pool with pre-created exchanges
+app.post('/admin/seed-pool', (req, res) => {
     try {
-        const config = POOL_CONFIG[key];
-        const currentSize = memoryPool[key]?.length || 0;
-
-        if (currentSize >= config.size) {
-            return res.json({
-                success: false,
-                error: `$${key} pool already full (${currentSize}/${config.size})`
-            });
+        const { exchanges } = req.body;
+        if (!exchanges || !Array.isArray(exchanges)) {
+            return res.status(400).json({ success: false, error: 'exchanges array required' });
         }
-
-        console.log(`[ADD-ONE] Creating exchange for $${key}...`);
-        const exchange = await createExchange(config.amount);
-        memoryPool[key].push({ ...exchange, amount: config.amount });
-        isDirty = true;
-        await syncPoolToDisk();
-
-        res.json({
-            success: true,
-            pricePoint: parseInt(key),
-            exchangeId: exchange.exchangeId,
-            poolSize: memoryPool[key].length,
-            target: config.size
-        });
+        exchangePool.push(...exchanges);
+        savePool();
+        console.log(`✓ Seeded ${exchanges.length} exchanges (total: ${exchangePool.length})`);
+        res.json({ success: true, poolSize: exchangePool.length });
     } catch (error) {
-        console.error('[ADD-ONE] Failed:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Admin: Fill specific pool sequentially
- */
-app.post('/admin/fill-sequential', async (req, res) => {
-    const { pricePoint } = req.body;
-    const key = pricePoint ? String(pricePoint) : PRICE_POINTS[0].toString();
-
-    if (!POOL_CONFIG[key]) {
-        return res.status(400).json({
-            success: false,
-            error: `Invalid price point. Available: $${PRICE_POINTS.join(', $')}`
-        });
-    }
-
-    if (replenishmentLock[key]) {
-        return res.json({ success: false, error: 'Already filling pool' });
-    }
-
-    replenishmentLock[key] = true;
-
+// Admin endpoint - manual pool initialization
+app.post('/admin/init-pool', async (req, res) => {
     try {
-        const config = POOL_CONFIG[key];
-        const startSize = memoryPool[key]?.length || 0;
-        const needed = config.size - startSize;
-
-        if (needed <= 0) {
-            replenishmentLock[key] = false;
+        // Check if any pool is already replenishing
+        const alreadyReplenishing = Object.values(replenishmentLocks).some(lock => lock);
+        if (alreadyReplenishing) {
             return res.json({
-                success: true,
-                message: `$${key} pool already full`,
-                poolSize: startSize
+                success: false,
+                error: 'One or more pools are already initializing'
             });
         }
 
-        console.log(`[FILL-SEQ] $${key}: Creating ${needed} exchanges...`);
+        console.log('[INIT-POOL] Starting triple-pool initialization...');
+        console.log('[INIT-POOL] Creating 15 exchanges in parallel (5 per pool)...');
 
-        let created = 0;
-        for (let i = 0; i < needed; i++) {
-            try {
-                const exchange = await createExchange(config.amount);
-                memoryPool[key].push({ ...exchange, amount: config.amount });
-                isDirty = true;
-                created++;
-                console.log(`[FILL-SEQ] $${key}: ${created}/${needed}`);
-                if (i < needed - 1) await new Promise(r => setTimeout(r, 2000));
-            } catch (error) {
-                console.error(`[FILL-SEQ] Failed:`, error.message);
+        const pools = {};
+        Object.keys(POOL_CONFIG).forEach(key => pools[key] = []);
+        const allPromises = [];
+
+        // Create all 15 exchanges in parallel for speed
+        for (const [poolKey, config] of Object.entries(POOL_CONFIG)) {
+            for (let i = 0; i < config.size; i++) {
+                allPromises.push(
+                    createExchange(config.amount)
+                        .then(exchange => {
+                            exchange.amount = config.amount;
+                            pools[poolKey].push(exchange);
+                            console.log(`[INIT-POOL] Pool ${poolKey}: exchange ${pools[poolKey].length}/${config.size} created`);
+                            return { poolKey, success: true };
+                        })
+                        .catch(error => {
+                            console.error(`[INIT-POOL] Pool ${poolKey}: failed to create exchange:`, error);
+                            return { poolKey, success: false, error };
+                        })
+                );
             }
         }
 
-        await syncPoolToDisk();
-        replenishmentLock[key] = false;
+        // Wait for all exchanges to be created
+        const results = await Promise.all(allPromises);
+
+        // Count successes and failures
+        const successes = results.filter(r => r.success).length;
+        const failures = results.filter(r => !r.success).length;
+
+        console.log(`[INIT-POOL] Creation complete: ${successes} succeeded, ${failures} failed`);
+
+        if (successes === 0) {
+            return res.status(500).json({
+                success: false,
+                error: 'Pool initialization failed - no exchanges were created'
+            });
+        }
+
+        await savePool(pools);
+
+        console.log('[INIT-POOL] Triple-pool initialization complete!');
+        const poolSizes = {};
+        let totalSize = 0;
+        Object.keys(POOL_CONFIG).forEach(key => {
+            poolSizes[key] = pools[key].length;
+            totalSize += pools[key].length;
+        });
+        console.log('[INIT-POOL] Final pool sizes:', { ...poolSizes, total: totalSize });
 
         res.json({
             success: true,
-            pricePoint: parseInt(key),
-            created,
-            poolSize: memoryPool[key].length,
-            target: config.size
+            pools: poolSizes,
+            totalCreated: successes,
+            totalFailed: failures,
+            message: `Triple-pool initialized with ${successes} exchanges (${failures} failed)`
         });
     } catch (error) {
-        replenishmentLock[key] = false;
+        console.error('[INIT-POOL] Manual init failed:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ============================================================================
-// SERVER STARTUP
-// ============================================================================
-
 app.listen(PORT, async () => {
-    console.log(`\n====================================================`);
-    console.log(`  SimpleSwap Exchange Pool Server v4.0.0`);
-    console.log(`====================================================`);
-    console.log(`  Port: ${PORT}`);
-    console.log(`  Price Points: $${PRICE_POINTS.join(', $')}`);
-    console.log(`  Pool Size Per Price: ${POOL_SIZE_PER_PRICE}`);
-    console.log(`  Wallet: ${MERCHANT_WALLET}`);
-    console.log(`====================================================\n`);
+    console.log(`\n🚀 SimpleSwap Triple-Pool Server v6.1.0`);
+    console.log(`   Port: ${PORT}`);
+    console.log(`   Mode: TRIPLE-POOL SYSTEM`);
+    console.log(`   Storage: ${POOL_FILE}`);
+    console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
 
     try {
-        await loadPoolIntoMemory();
+        const pools = await loadPool();
+        console.log(`\n📊 Pool Status:`);
+        console.log(`   $29 Pool: ${pools['29']?.length || 0}/5 (Preorder, no bump)`);
+        console.log(`   $39 Pool: ${pools['39']?.length || 0}/5 (Preorder + Order Bump)`);
+        console.log(`   $69 Pool: ${pools['69']?.length || 0}/5 (Regular, covers $69 and $79)`);
+        const totalSize = (pools['29']?.length || 0) + (pools['39']?.length || 0) + (pools['69']?.length || 0);
+        console.log(`   Total: ${totalSize}/15 exchanges`);
 
-        console.log(`Pool Status:`);
-        PRICE_POINTS.forEach(price => {
-            const key = String(price);
-            const size = memoryPool[key]?.length || 0;
-            const status = size >= POOL_SIZE_PER_PRICE ? 'FULL' : size > 0 ? 'PARTIAL' : 'EMPTY';
-            console.log(`  $${price}: ${size}/${POOL_SIZE_PER_PRICE} [${status}]`);
-        });
-
-        startPeriodicDiskSync();
-        console.log(`\nPeriodic disk sync started (every ${DISK_SYNC_INTERVAL / 1000}s)`);
-
+        console.log(`\n✅ Server ready!`);
+        if (totalSize > 0) {
+            console.log(`   Triple-pool system active - instant delivery enabled`);
+        } else {
+            console.log(`   Use POST /admin/init-pool to initialize pools`);
+        }
     } catch (error) {
-        console.error('Startup error:', error.message);
+        console.log(`\n⚠️  Could not load pool status`);
     }
     console.log('');
 });
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-    console.log('\nShutting down...');
-    if (isDirty) {
-        console.log('Syncing to disk...');
-        await syncPoolToDisk();
-    }
-    process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-    console.log('\nReceived SIGINT...');
-    if (isDirty) {
-        console.log('Syncing to disk...');
-        await syncPoolToDisk();
-    }
+process.on('SIGTERM', () => {
+    console.log('\n⏹ Shutting down...');
     process.exit(0);
 });
