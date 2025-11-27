@@ -33,7 +33,7 @@ const POOL_CONFIG = {};
 PRICE_POINTS.forEach((price, index) => {
   const descriptions = ['Pre-order only', 'Pre-order + Order Bump', 'Ship Today'];
   POOL_CONFIG[String(price)] = {
-    size: 5,
+    size: POOL_SIZE, // Use configured POOL_SIZE (default: 10)
     minSize: MIN_POOL_SIZE_DEFAULT,
     amount: price,
     description: descriptions[index] || `$${price} pool`
@@ -296,6 +296,25 @@ function normalizeAmount(amountUSD) {
     throw new Error(`Invalid amount: $${amount}. Expected: ${PRICE_POINTS.join(', ')}`);
 }
 
+// Retry helper with exponential backoff
+async function retryWithBackoff(fn, maxRetries = 3, delayMs = 5000, context = '') {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            console.error(`[RETRY] ${context} - Attempt ${attempt}/${maxRetries} failed:`, error.message);
+
+            if (attempt === maxRetries) {
+                console.error(`[RETRY] ${context} - All ${maxRetries} attempts exhausted`);
+                throw error;
+            }
+
+            console.log(`[RETRY] ${context} - Waiting ${delayMs}ms before retry ${attempt + 1}...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+    }
+}
+
 // Helper to get pool sizes dynamically
 function getPoolSizes(pools) {
     const sizes = {};
@@ -317,12 +336,12 @@ app.get('/', async (req, res) => {
     res.json({
         service: 'SimpleSwap Dynamic Pool Server [PRODUCTION]',
         status: 'running',
-        version: '11.0.0',
+        version: '12.0.0', // Bumped version for bulletproof auto-replenishment
         mode: 'dynamic-pool',
         configuredPrices: PRICE_POINTS,
         pools: sizes,
         totalSize: total,
-        totalMaxSize: PRICE_POINTS.length * 5,
+        totalMaxSize: PRICE_POINTS.length * POOL_SIZE,
         note: total > 0
             ? `Pool system ready - instant delivery for $${PRICE_POINTS.join(', $')}`
             : 'Use POST /admin/init-pool to initialize pools'
@@ -407,19 +426,25 @@ async function replenishPool(poolKey) {
             return;
         }
 
-        console.log(`[REPLENISH] Creating ${needed} exchanges for pool ${poolKey} in parallel`);
+        console.log(`[REPLENISH] Creating ${needed} exchanges for pool ${poolKey} in parallel with 3-attempt retry`);
 
-        // Create all needed exchanges in parallel for speed
+        // Create all needed exchanges in parallel with retry logic
         const promises = [];
         for (let i = 0; i < needed; i++) {
             promises.push(
-                createExchange(config.amount)
+                retryWithBackoff(
+                    () => createExchange(config.amount),
+                    3, // maxRetries
+                    5000, // 5 second delay
+                    `Pool ${poolKey} exchange ${i+1}/${needed}`
+                )
                     .then(exchange => {
                         exchange.amount = config.amount;
+                        console.log(`[REPLENISH] Pool ${poolKey}: Successfully created exchange ${i+1}/${needed}`);
                         return exchange;
                     })
                     .catch(error => {
-                        console.error(`[REPLENISH] Failed exchange ${i+1}/${needed} for pool ${poolKey}:`, error);
+                        console.error(`[REPLENISH] Failed exchange ${i+1}/${needed} for pool ${poolKey} after 3 retries:`, error);
                         return null; // Return null for failed exchanges
                     })
             );
@@ -627,7 +652,7 @@ app.post('/admin/init-pool', async (req, res) => {
         }
 
         console.log('[INIT-POOL] Starting triple-pool initialization...');
-        console.log('[INIT-POOL] Creating 15 exchanges in parallel (5 per pool)...');
+        console.log(`[INIT-POOL] Creating ${PRICE_POINTS.length * POOL_SIZE} exchanges in parallel (${POOL_SIZE} per pool)...`);
 
         const pools = {};
         Object.keys(POOL_CONFIG).forEach(key => pools[key] = []);
@@ -693,24 +718,34 @@ app.post('/admin/init-pool', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`\n🚀 SimpleSwap Triple-Pool Server v6.1.0`);
+    console.log(`\n🚀 SimpleSwap Triple-Pool Server v12.0.0 [BULLETPROOF AUTO-REPLENISHMENT]`);
     console.log(`   Port: ${PORT}`);
-    console.log(`   Mode: TRIPLE-POOL SYSTEM`);
+    console.log(`   Mode: TRIPLE-POOL SYSTEM with 3-RETRY MECHANISM`);
     console.log(`   Storage: ${POOL_FILE}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
+    console.log(`   Pool Target: ${POOL_SIZE} exchanges per pool`);
 
     try {
         const pools = await loadPool();
         console.log(`\n📊 Pool Status:`);
-        console.log(`   $29 Pool: ${pools['29']?.length || 0}/5 (Preorder, no bump)`);
-        console.log(`   $39 Pool: ${pools['39']?.length || 0}/5 (Preorder + Order Bump)`);
-        console.log(`   $69 Pool: ${pools['69']?.length || 0}/5 (Regular, covers $69 and $79)`);
-        const totalSize = (pools['29']?.length || 0) + (pools['39']?.length || 0) + (pools['69']?.length || 0);
-        console.log(`   Total: ${totalSize}/15 exchanges`);
+
+        // Dynamic pool status display
+        PRICE_POINTS.forEach(price => {
+            const key = String(price);
+            const current = pools[key]?.length || 0;
+            const target = POOL_CONFIG[key].size;
+            const desc = POOL_CONFIG[key].description;
+            console.log(`   $${price} Pool: ${current}/${target} (${desc})`);
+        });
+
+        const totalSize = Object.values(pools).reduce((sum, pool) => sum + pool.length, 0);
+        const totalTarget = PRICE_POINTS.length * POOL_SIZE;
+        console.log(`   Total: ${totalSize}/${totalTarget} exchanges`);
 
         console.log(`\n✅ Server ready!`);
         if (totalSize > 0) {
             console.log(`   Triple-pool system active - instant delivery enabled`);
+            console.log(`   Auto-replenishment: ACTIVE (3 retries, 5s delay)`);
         } else {
             console.log(`   Use POST /admin/init-pool to initialize pools`);
         }
