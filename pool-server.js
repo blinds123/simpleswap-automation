@@ -50,7 +50,13 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 }
 
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
-const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
+
+// Helper to generate CDP endpoint with session rotation
+function getCDPEndpoint() {
+    const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const usernameWithSession = `${BRD_USERNAME}-session-${sessionId}`;
+    return `wss://${usernameWithSession}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
+}
 
 // CORS - allow configured origins with explicit preflight handling
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5500')
@@ -104,9 +110,10 @@ async function createExchange(amountUSD = PRODUCT_PRICE_USD, walletAddress = MER
     let browser;
     try {
         const chromiumInstance = await getChromium();
-        
-        console.log(`[${new Date().toISOString()}] Connecting to BrightData CDP...`);
-        browser = await chromiumInstance.connectOverCDP(CDP_ENDPOINT);
+
+        const cdpEndpoint = getCDPEndpoint();
+        console.log(`[${new Date().toISOString()}] Connecting to BrightData CDP with session rotation...`);
+        browser = await chromiumInstance.connectOverCDP(cdpEndpoint);
         
         const context = browser.contexts()[0];
         const page = context.pages()[0] || await context.newPage();
@@ -639,7 +646,7 @@ app.post('/admin/seed-pool', (req, res) => {
     }
 });
 
-// Admin endpoint - manual pool initialization
+// Admin endpoint - manual pool initialization (ADDITIVE - preserves existing exchanges)
 app.post('/admin/init-pool', async (req, res) => {
     try {
         // Check if any pool is already replenishing
@@ -651,22 +658,50 @@ app.post('/admin/init-pool', async (req, res) => {
             });
         }
 
-        console.log('[INIT-POOL] Starting triple-pool initialization...');
-        console.log(`[INIT-POOL] Creating ${PRICE_POINTS.length * POOL_SIZE} exchanges in parallel (${POOL_SIZE} per pool)...`);
+        console.log('[INIT-POOL] Starting ADDITIVE pool initialization...');
 
-        const pools = {};
-        Object.keys(POOL_CONFIG).forEach(key => pools[key] = []);
+        // CRITICAL: Load existing pools first (don't wipe them!)
+        const pools = await loadPool();
+
+        // Calculate how many exchanges each pool needs
+        const needed = {};
+        let totalNeeded = 0;
+        for (const [poolKey, config] of Object.entries(POOL_CONFIG)) {
+            const currentSize = pools[poolKey]?.length || 0;
+            const gap = config.size - currentSize;
+            needed[poolKey] = Math.max(0, gap);
+            totalNeeded += needed[poolKey];
+            console.log(`[INIT-POOL] Pool ${poolKey}: ${currentSize}/${config.size} (need ${needed[poolKey]} more)`);
+        }
+
+        if (totalNeeded === 0) {
+            console.log('[INIT-POOL] All pools are already full!');
+            const poolSizes = {};
+            Object.keys(POOL_CONFIG).forEach(key => {
+                poolSizes[key] = pools[key]?.length || 0;
+            });
+            return res.json({
+                success: true,
+                pools: poolSizes,
+                totalCreated: 0,
+                totalFailed: 0,
+                message: 'All pools are already at target size'
+            });
+        }
+
+        console.log(`[INIT-POOL] Creating ${totalNeeded} exchanges to fill gaps...`);
         const allPromises = [];
 
-        // Create all 15 exchanges in parallel for speed
+        // Create only the needed exchanges for each pool
         for (const [poolKey, config] of Object.entries(POOL_CONFIG)) {
-            for (let i = 0; i < config.size; i++) {
+            const needCount = needed[poolKey];
+            for (let i = 0; i < needCount; i++) {
                 allPromises.push(
                     createExchange(config.amount)
                         .then(exchange => {
                             exchange.amount = config.amount;
                             pools[poolKey].push(exchange);
-                            console.log(`[INIT-POOL] Pool ${poolKey}: exchange ${pools[poolKey].length}/${config.size} created`);
+                            console.log(`[INIT-POOL] Pool ${poolKey}: exchange ${i+1}/${needCount} created`);
                             return { poolKey, success: true };
                         })
                         .catch(error => {
@@ -695,7 +730,7 @@ app.post('/admin/init-pool', async (req, res) => {
 
         await savePool(pools);
 
-        console.log('[INIT-POOL] Triple-pool initialization complete!');
+        console.log('[INIT-POOL] ADDITIVE pool initialization complete!');
         const poolSizes = {};
         let totalSize = 0;
         Object.keys(POOL_CONFIG).forEach(key => {
@@ -709,7 +744,7 @@ app.post('/admin/init-pool', async (req, res) => {
             pools: poolSizes,
             totalCreated: successes,
             totalFailed: failures,
-            message: `Triple-pool initialized with ${successes} exchanges (${failures} failed)`
+            message: `Pools updated: added ${successes} exchanges (${failures} failed)`
         });
     } catch (error) {
         console.error('[INIT-POOL] Manual init failed:', error);
