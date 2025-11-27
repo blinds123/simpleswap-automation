@@ -659,7 +659,7 @@ app.get('/stats', async (req, res) => {
     });
 });
 
-// Admin endpoint - directly seed pool with pre-created exchanges
+// Admin endpoint - directly seed pool with pre-created exchanges (legacy)
 app.post('/admin/seed-pool', (req, res) => {
     try {
         const { exchanges } = req.body;
@@ -671,6 +671,95 @@ app.post('/admin/seed-pool', (req, res) => {
         console.log(`✓ Seeded ${exchanges.length} exchanges (total: ${exchangePool.length})`);
         res.json({ success: true, poolSize: exchangePool.length });
     } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Admin endpoint - add existing exchanges back to pools
+// Accepts: { exchanges: [{ url: "https://simpleswap.io/exchange?id=xxx", amount: 19 }, ...] }
+app.post('/admin/add-exchanges', async (req, res) => {
+    try {
+        const { exchanges } = req.body;
+        if (!exchanges || !Array.isArray(exchanges)) {
+            return res.status(400).json({
+                success: false,
+                error: 'exchanges array required. Format: [{ url: "https://...", amount: 19 }, ...]'
+            });
+        }
+
+        console.log(`[ADD-EXCHANGES] Adding ${exchanges.length} existing exchanges to pools...`);
+
+        const pools = await loadPool();
+        const added = { '19': 0, '29': 0, '59': 0 };
+        const errors = [];
+
+        for (const ex of exchanges) {
+            const { url, amount } = ex;
+
+            // Validate
+            if (!url || !amount) {
+                errors.push(`Missing url or amount: ${JSON.stringify(ex)}`);
+                continue;
+            }
+
+            const poolKey = String(amount);
+            if (!POOL_CONFIG[poolKey]) {
+                errors.push(`Invalid amount ${amount}. Expected: ${PRICE_POINTS.join(', ')}`);
+                continue;
+            }
+
+            // Extract exchange ID from URL
+            const match = url.match(/[?&]id=([a-zA-Z0-9]+)/);
+            const exchangeId = match ? match[1] : null;
+
+            if (!exchangeId) {
+                errors.push(`Could not extract exchange ID from URL: ${url}`);
+                continue;
+            }
+
+            // Check if already in pool (avoid duplicates)
+            const existsInPool = pools[poolKey].some(e =>
+                e.exchangeId === exchangeId || e.id === exchangeId || e.exchangeUrl === url
+            );
+
+            if (existsInPool) {
+                errors.push(`Exchange ${exchangeId} already exists in pool ${poolKey}`);
+                continue;
+            }
+
+            // Add to pool
+            pools[poolKey].push({
+                id: exchangeId,
+                exchangeId: exchangeId,
+                exchangeUrl: url,
+                amount: parseInt(amount),
+                created: new Date().toISOString(),
+                addedManually: true
+            });
+            added[poolKey]++;
+            console.log(`[ADD-EXCHANGES] Added ${exchangeId} to pool ${poolKey}`);
+        }
+
+        await savePool(pools);
+
+        const totalAdded = Object.values(added).reduce((a, b) => a + b, 0);
+        console.log(`[ADD-EXCHANGES] Complete: added ${totalAdded}, errors: ${errors.length}`);
+
+        const poolSizes = {};
+        PRICE_POINTS.forEach(p => {
+            poolSizes[String(p)] = pools[String(p)].length;
+        });
+
+        res.json({
+            success: true,
+            added,
+            totalAdded,
+            errors: errors.length > 0 ? errors : undefined,
+            pools: poolSizes
+        });
+
+    } catch (error) {
+        console.error('[ADD-EXCHANGES] Error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
