@@ -296,13 +296,32 @@ function normalizeAmount(amountUSD) {
     throw new Error(`Invalid amount: $${amount}. Expected: ${PRICE_POINTS.join(', ')}`);
 }
 
-// Retry helper with exponential backoff
-async function retryWithBackoff(fn, maxRetries = 3, delayMs = 5000, context = '') {
+// Circuit breaker to prevent cost drain
+let consecutiveFailures = 0;
+const MAX_CONSECUTIVE_FAILURES = 3;
+
+function resetCircuitBreaker() {
+    consecutiveFailures = 0;
+}
+
+function checkCircuitBreaker() {
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        throw new Error(`Circuit breaker triggered: ${consecutiveFailures} consecutive failures. Stopping to prevent BrightData cost drain.`);
+    }
+}
+
+// Retry helper with exponential backoff - REDUCED to 1 retry to save costs
+async function retryWithBackoff(fn, maxRetries = 1, delayMs = 5000, context = '') {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            return await fn();
+            checkCircuitBreaker();
+            const result = await fn();
+            resetCircuitBreaker(); // Success resets the breaker
+            return result;
         } catch (error) {
+            consecutiveFailures++;
             console.error(`[RETRY] ${context} - Attempt ${attempt}/${maxRetries} failed:`, error.message);
+            console.error(`[RETRY] Consecutive failures: ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}`);
 
             if (attempt === maxRetries) {
                 console.error(`[RETRY] ${context} - All ${maxRetries} attempts exhausted`);
@@ -313,6 +332,34 @@ async function retryWithBackoff(fn, maxRetries = 3, delayMs = 5000, context = ''
             await new Promise(resolve => setTimeout(resolve, delayMs));
         }
     }
+}
+
+// Sequential execution helper - max 2 concurrent to save BrightData costs
+async function executeWithConcurrencyLimit(tasks, limit = 2) {
+    const results = [];
+    const executing = [];
+
+    for (const task of tasks) {
+        const p = Promise.resolve().then(() => task()).then(
+            result => ({ status: 'fulfilled', value: result }),
+            error => ({ status: 'rejected', reason: error })
+        );
+        results.push(p);
+        executing.push(p);
+
+        if (executing.length >= limit) {
+            await Promise.race(executing);
+            // Remove completed promises
+            for (let i = executing.length - 1; i >= 0; i--) {
+                const status = await Promise.race([executing[i], Promise.resolve('pending')]);
+                if (status !== 'pending') {
+                    executing.splice(i, 1);
+                }
+            }
+        }
+    }
+
+    return Promise.all(results);
 }
 
 // Helper to get pool sizes dynamically
@@ -336,7 +383,7 @@ app.get('/', async (req, res) => {
     res.json({
         service: 'SimpleSwap Dynamic Pool Server [PRODUCTION]',
         status: 'running',
-        version: '13.0.0', // Enhanced auto-replenishment with 30s retry on failure
+        version: '14.0.0', // COST-SAVING: Max 2 concurrent, 1 retry, circuit breaker
         mode: 'dynamic-pool',
         configuredPrices: PRICE_POINTS,
         pools: sizes,
@@ -426,33 +473,34 @@ async function replenishPool(poolKey) {
             return;
         }
 
-        console.log(`[REPLENISH] Creating ${needed} exchanges for pool ${poolKey} in parallel with 3-attempt retry`);
+        console.log(`[REPLENISH] Creating ${needed} exchanges for pool ${poolKey} SEQUENTIALLY (max 2 concurrent, 1 retry) to save BrightData costs`);
 
-        // Create all needed exchanges in parallel with retry logic
-        const promises = [];
+        // Create exchanges with LIMITED CONCURRENCY (max 2 at a time) to save costs
+        const tasks = [];
         for (let i = 0; i < needed; i++) {
-            promises.push(
-                retryWithBackoff(
-                    () => createExchange(config.amount),
-                    3, // maxRetries
-                    5000, // 5 second delay
-                    `Pool ${poolKey} exchange ${i+1}/${needed}`
-                )
-                    .then(exchange => {
-                        exchange.amount = config.amount;
-                        console.log(`[REPLENISH] Pool ${poolKey}: Successfully created exchange ${i+1}/${needed}`);
-                        return exchange;
-                    })
-                    .catch(error => {
-                        console.error(`[REPLENISH] Failed exchange ${i+1}/${needed} for pool ${poolKey} after 3 retries:`, error);
-                        return null; // Return null for failed exchanges
-                    })
-            );
+            tasks.push(async () => {
+                try {
+                    const exchange = await retryWithBackoff(
+                        () => createExchange(config.amount),
+                        1, // maxRetries - REDUCED from 3 to save costs
+                        5000, // 5 second delay
+                        `Pool ${poolKey} exchange ${i+1}/${needed}`
+                    );
+                    exchange.amount = config.amount;
+                    console.log(`[REPLENISH] Pool ${poolKey}: Successfully created exchange ${i+1}/${needed}`);
+                    return exchange;
+                } catch (error) {
+                    console.error(`[REPLENISH] Failed exchange ${i+1}/${needed} for pool ${poolKey}:`, error.message);
+                    return null; // Return null for failed exchanges
+                }
+            });
         }
 
-        // Wait for all exchanges to be created
-        const results = await Promise.all(promises);
-        const validExchanges = results.filter(e => e !== null);
+        // Execute with max 2 concurrent - prevents cost drain
+        const results = await executeWithConcurrencyLimit(tasks, 2);
+        const validExchanges = results
+            .filter(r => r.status === 'fulfilled' && r.value !== null)
+            .map(r => r.value);
 
         console.log(`[REPLENISH] Created ${validExchanges.length}/${needed} exchanges successfully`);
 
@@ -807,35 +855,41 @@ app.post('/admin/init-pool', async (req, res) => {
             });
         }
 
-        console.log(`[INIT-POOL] Creating ${totalNeeded} exchanges to fill gaps...`);
-        const allPromises = [];
+        console.log(`[INIT-POOL] Creating ${totalNeeded} exchanges with LIMITED CONCURRENCY (max 2) to save BrightData costs...`);
 
-        // Create only the needed exchanges for each pool
+        // Reset circuit breaker at start of manual init
+        resetCircuitBreaker();
+
+        // Build task list for concurrency-limited execution
+        const allTasks = [];
         for (const [poolKey, config] of Object.entries(POOL_CONFIG)) {
             const needCount = needed[poolKey];
             for (let i = 0; i < needCount; i++) {
-                allPromises.push(
-                    createExchange(config.amount)
-                        .then(exchange => {
-                            exchange.amount = config.amount;
-                            pools[poolKey].push(exchange);
-                            console.log(`[INIT-POOL] Pool ${poolKey}: exchange ${i+1}/${needCount} created`);
-                            return { poolKey, success: true };
-                        })
-                        .catch(error => {
-                            console.error(`[INIT-POOL] Pool ${poolKey}: failed to create exchange:`, error);
-                            return { poolKey, success: false, error };
-                        })
-                );
+                allTasks.push(async () => {
+                    try {
+                        checkCircuitBreaker(); // Stop if too many failures
+                        const exchange = await createExchange(config.amount);
+                        exchange.amount = config.amount;
+                        pools[poolKey].push(exchange);
+                        console.log(`[INIT-POOL] Pool ${poolKey}: exchange ${i+1}/${needCount} created`);
+                        resetCircuitBreaker(); // Success resets breaker
+                        return { poolKey, success: true };
+                    } catch (error) {
+                        consecutiveFailures++;
+                        console.error(`[INIT-POOL] Pool ${poolKey}: failed to create exchange (failures: ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}):`, error.message);
+                        return { poolKey, success: false, error: error.message };
+                    }
+                });
             }
         }
 
-        // Wait for all exchanges to be created
-        const results = await Promise.all(allPromises);
+        // Execute with max 2 concurrent - PREVENTS COST DRAIN
+        const rawResults = await executeWithConcurrencyLimit(allTasks, 2);
+        const results = rawResults.map(r => r.status === 'fulfilled' ? r.value : { success: false });
 
         // Count successes and failures
-        const successes = results.filter(r => r.success).length;
-        const failures = results.filter(r => !r.success).length;
+        const successes = results.filter(r => r && r.success).length;
+        const failures = results.filter(r => !r || !r.success).length;
 
         console.log(`[INIT-POOL] Creation complete: ${successes} succeeded, ${failures} failed`);
 
