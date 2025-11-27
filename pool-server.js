@@ -336,7 +336,7 @@ app.get('/', async (req, res) => {
     res.json({
         service: 'SimpleSwap Dynamic Pool Server [PRODUCTION]',
         status: 'running',
-        version: '12.0.0', // Bumped version for bulletproof auto-replenishment
+        version: '13.0.0', // Enhanced auto-replenishment with 30s retry on failure
         mode: 'dynamic-pool',
         configuredPrices: PRICE_POINTS,
         pools: sizes,
@@ -542,10 +542,27 @@ app.post('/buy-now', async (req, res) => {
                 lockReleased = true;
                 const exchange = await createExchange(parseInt(poolKey));
 
-                // Trigger replenishment in background
-                replenishPool(poolKey).catch(err =>
-                    console.error(`[BUY-NOW] Background replenishment failed:`, err)
-                );
+                // Trigger replenishment in background with enhanced retry
+                setImmediate(async () => {
+                    try {
+                        await replenishPool(poolKey);
+                        console.log(`[BUY-NOW] ✓ Background replenishment completed successfully for pool ${poolKey}`);
+                    } catch (err) {
+                        console.error(`[BUY-NOW] ✗ Background replenishment FAILED for pool ${poolKey}:`, err.message);
+
+                        // CRITICAL: Schedule a retry after 30 seconds if replenishment fails
+                        console.log(`[BUY-NOW] Scheduling retry replenishment in 30 seconds for pool ${poolKey}...`);
+                        setTimeout(async () => {
+                            try {
+                                console.log(`[BUY-NOW] Retrying replenishment for pool ${poolKey}...`);
+                                await replenishPool(poolKey);
+                                console.log(`[BUY-NOW] ✓ Retry replenishment succeeded for pool ${poolKey}`);
+                            } catch (retryErr) {
+                                console.error(`[BUY-NOW] ✗ Retry replenishment also failed for pool ${poolKey}:`, retryErr.message);
+                            }
+                        }, 30000);
+                    }
+                });
 
                 return res.json({
                     success: true,
@@ -566,9 +583,28 @@ app.post('/buy-now', async (req, res) => {
             // Trigger replenishment IMMEDIATELY after any exchange is used
             if (targetPool.length < POOL_CONFIG[poolKey].size) {
                 console.log(`[BUY-NOW] Pool ${poolKey} not full (${targetPool.length}/${POOL_CONFIG[poolKey].size}), triggering immediate replenishment`);
-                replenishPool(poolKey).catch(err =>
-                    console.error(`[BUY-NOW] Replenishment failed:`, err)
-                );
+
+                // Fire and forget, but with enhanced retry and logging
+                setImmediate(async () => {
+                    try {
+                        await replenishPool(poolKey);
+                        console.log(`[BUY-NOW] ✓ Background replenishment completed successfully for pool ${poolKey}`);
+                    } catch (err) {
+                        console.error(`[BUY-NOW] ✗ Background replenishment FAILED for pool ${poolKey}:`, err.message);
+
+                        // CRITICAL: Schedule a retry after 30 seconds if replenishment fails
+                        console.log(`[BUY-NOW] Scheduling retry replenishment in 30 seconds for pool ${poolKey}...`);
+                        setTimeout(async () => {
+                            try {
+                                console.log(`[BUY-NOW] Retrying replenishment for pool ${poolKey}...`);
+                                await replenishPool(poolKey);
+                                console.log(`[BUY-NOW] ✓ Retry replenishment succeeded for pool ${poolKey}`);
+                            } catch (retryErr) {
+                                console.error(`[BUY-NOW] ✗ Retry replenishment also failed for pool ${poolKey}:`, retryErr.message);
+                            }
+                        }, 30000);
+                    }
+                });
             }
 
             res.json({
@@ -746,7 +782,7 @@ app.post('/admin/init-pool', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`\n🚀 SimpleSwap Triple-Pool Server v12.0.0 [BULLETPROOF AUTO-REPLENISHMENT]`);
+    console.log(`\n🚀 SimpleSwap Triple-Pool Server v13.0.0 [ENHANCED AUTO-REPLENISHMENT]`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Mode: TRIPLE-POOL SYSTEM with 3-RETRY MECHANISM`);
     console.log(`   Storage: ${POOL_FILE}`);
@@ -773,7 +809,7 @@ app.listen(PORT, async () => {
         console.log(`\n✅ Server ready!`);
         if (totalSize > 0) {
             console.log(`   Triple-pool system active - instant delivery enabled`);
-            console.log(`   Auto-replenishment: ACTIVE (3 retries, 5s delay)`);
+            console.log(`   Auto-replenishment: ACTIVE (3 retries + 30s fallback)`);
         } else {
             console.log(`   Use POST /admin/init-pool to initialize pools`);
         }
