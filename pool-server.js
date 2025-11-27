@@ -50,13 +50,7 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 }
 
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
-
-// Helper to generate CDP endpoint with session rotation
-function getCDPEndpoint() {
-    const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const usernameWithSession = `${BRD_USERNAME}-session-${sessionId}`;
-    return `wss://${usernameWithSession}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
-}
+const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
 // CORS - allow configured origins with explicit preflight handling
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5500')
@@ -111,9 +105,8 @@ async function createExchange(amountUSD = PRODUCT_PRICE_USD, walletAddress = MER
     try {
         const chromiumInstance = await getChromium();
 
-        const cdpEndpoint = getCDPEndpoint();
-        console.log(`[${new Date().toISOString()}] Connecting to BrightData CDP with session rotation...`);
-        browser = await chromiumInstance.connectOverCDP(cdpEndpoint);
+        console.log(`[${new Date().toISOString()}] Connecting to BrightData CDP...`);
+        browser = await chromiumInstance.connectOverCDP(CDP_ENDPOINT);
         
         const context = browser.contexts()[0];
         const page = context.pages()[0] || await context.newPage();
