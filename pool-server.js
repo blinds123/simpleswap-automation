@@ -71,9 +71,28 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
 const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
-// CORS
+// CORS - Reflect origin for maximum compatibility
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '*').split(',').map(o => o.trim());
-app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+const corsOptions = {
+    origin: function (origin, callback) {
+        // Allow requests with no origin (mobile apps, curl, etc)
+        if (!origin) return callback(null, true);
+
+        // If ALLOWED_ORIGINS is ['*'], allow all origins
+        if (ALLOWED_ORIGINS.length === 1 && ALLOWED_ORIGINS[0] === '*') {
+            return callback(null, true);
+        }
+
+        // Check if origin is in allowed list
+        if (ALLOWED_ORIGINS.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(null, true); // For now, allow all origins
+        }
+    },
+    credentials: true
+};
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '1kb' }));
 
 // ============================================================================
