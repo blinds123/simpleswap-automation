@@ -52,29 +52,37 @@ if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
 const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
 const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
-// CORS - allow configured origins with explicit preflight handling
-// Default includes common Netlify production sites + localhost for development
-const DEFAULT_ORIGINS = [
-    'http://localhost:3000',
-    'http://localhost:5500',
-    'https://reilly-dress.netlify.app',
-    'https://beigesneaker.netlify.app',
-    'https://auralo-sneakers.netlify.app'
-].join(',');
+// CORS - Auto-allow ALL *.netlify.app domains + localhost
+// This ensures any Netlify site works without manual configuration
+const LOCALHOST_ORIGINS = ['http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:3000'];
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || DEFAULT_ORIGINS)
-    .split(',')
-    .map(o => o.trim());
+// Helper to check if origin should be allowed
+function isOriginAllowed(origin) {
+    if (!origin) return false;
 
-console.log(`[CONFIG] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+    // Always allow any *.netlify.app domain
+    if (origin.endsWith('.netlify.app')) return true;
+
+    // Always allow localhost for development
+    if (LOCALHOST_ORIGINS.some(lo => origin.startsWith(lo.replace(':3000', '').replace(':5500', '')))) return true;
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) return true;
+
+    // Check additional origins from env var (optional)
+    const extraOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+    if (extraOrigins.includes('*') || extraOrigins.includes(origin)) return true;
+
+    return false;
+}
+
+console.log(`[CONFIG] CORS: Auto-allowing ALL *.netlify.app domains + localhost`);
 
 // Explicit CORS middleware that handles preflight properly
 app.use((req, res, next) => {
     const origin = req.headers.origin;
 
-    // Check if origin is allowed (or allow all if wildcard)
-    if (ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin)) {
-        res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    // Check if origin is allowed
+    if (isOriginAllowed(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -392,7 +400,7 @@ app.get('/', async (req, res) => {
     res.json({
         service: 'SimpleSwap Dynamic Pool Server [PRODUCTION]',
         status: 'running',
-        version: '15.0.0', // PERSISTENT DISK: Pool survives deploys + CORS fix
+        version: '16.0.0', // AUTO-CORS: All *.netlify.app domains allowed
         mode: 'dynamic-pool',
         configuredPrices: PRICE_POINTS,
         pools: sizes,
@@ -934,7 +942,7 @@ app.post('/admin/init-pool', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`\n🚀 SimpleSwap Triple-Pool Server v15.0.0 [PERSISTENT DISK + CORS FIX]`);
+    console.log(`\n🚀 SimpleSwap Triple-Pool Server v16.0.0 [AUTO-CORS FOR ALL NETLIFY]`);
     console.log(`   Port: ${PORT}`);
     console.log(`   Mode: TRIPLE-POOL SYSTEM with AUTO-REPLENISHMENT`);
     console.log(`   Storage: ${POOL_FILE}`);
