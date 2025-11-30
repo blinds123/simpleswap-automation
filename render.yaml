@@ -27,4 +27,4 @@ services:
       - key: BRIGHTDATA_PASSWORD
         sync: false
       - key: ALLOWED_ORIGINS
-        value: "https://reilly-dress.netlify.app,https://beigesneaker.netlify.app,https://auralo-sneakers.netlify.app,http://localhost:3000"
+        value: "https://reilly-dress.netlify.app,https://bodydress.netlify.app,https://beigesneaker.netlify.app,https://auralo-sneakers.netlify.app,http://localhost:3000,https://*.netlify.app"

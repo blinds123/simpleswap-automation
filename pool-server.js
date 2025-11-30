@@ -56,7 +56,8 @@ PRICE_POINTS.forEach(price => {
     };
 });
 
-const POOL_FILE = path.join(process.cwd(), 'exchange-pool.json');
+// Use Render Disk for persistence (survives deploys)
+const POOL_FILE = process.env.POOL_FILE_PATH || '/data/exchange-pool.json';
 
 // BrightData credentials
 const BRIGHTDATA_CUSTOMER_ID = process.env.BRIGHTDATA_CUSTOMER_ID;
