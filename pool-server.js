@@ -25,8 +25,8 @@ const PRICE_POINTS = (process.env.PRICE_POINTS || '19,29,59')
 
 console.log(`[CONFIG] Price points configured: ${PRICE_POINTS.join(', ')}`);
 
-// Persistent storage file
-const POOL_FILE = path.join(process.cwd(), 'exchange-pool.json');
+// Persistent storage file - uses /data on Render persistent disk, falls back to cwd for local dev
+const POOL_FILE = process.env.POOL_FILE_PATH || path.join(process.cwd(), 'exchange-pool.json');
 
 // Dynamic pool configuration based on PRICE_POINTS
 const POOL_CONFIG = {};
@@ -392,7 +392,7 @@ app.get('/', async (req, res) => {
     res.json({
         service: 'SimpleSwap Dynamic Pool Server [PRODUCTION]',
         status: 'running',
-        version: '14.0.0', // COST-SAVING: Max 2 concurrent, 1 retry, circuit breaker
+        version: '15.0.0', // PERSISTENT DISK: Pool survives deploys + CORS fix
         mode: 'dynamic-pool',
         configuredPrices: PRICE_POINTS,
         pools: sizes,
@@ -934,10 +934,11 @@ app.post('/admin/init-pool', async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-    console.log(`\n🚀 SimpleSwap Triple-Pool Server v13.0.0 [ENHANCED AUTO-REPLENISHMENT]`);
+    console.log(`\n🚀 SimpleSwap Triple-Pool Server v15.0.0 [PERSISTENT DISK + CORS FIX]`);
     console.log(`   Port: ${PORT}`);
-    console.log(`   Mode: TRIPLE-POOL SYSTEM with 3-RETRY MECHANISM`);
+    console.log(`   Mode: TRIPLE-POOL SYSTEM with AUTO-REPLENISHMENT`);
     console.log(`   Storage: ${POOL_FILE}`);
+    console.log(`   Persistent: ${POOL_FILE.startsWith('/data') ? 'YES (survives deploys)' : 'NO (ephemeral)'}`);
     console.log(`   Frontend: ${process.env.FRONTEND_URL || 'https://beigesneaker.netlify.app'}`);
     console.log(`   Pool Target: ${POOL_SIZE} exchanges per pool`);
 

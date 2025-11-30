@@ -1,19 +1,23 @@
 services:
   - type: web
     name: simpleswap-automation-1
-    runtime: node
-    plan: free
-    buildCommand: npm install
-    startCommand: node pool-server.js
+    runtime: docker
+    plan: starter
+    disk:
+      name: pool-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: PRICE_POINTS
         value: "19,29,59"
-      - key: POOL_SIZE_PER_PRICE
-        value: "5"
+      - key: POOL_SIZE
+        value: "10"
       - key: MIN_POOL_SIZE
         value: "3"
+      - key: POOL_FILE_PATH
+        value: "/data/exchange-pool.json"
       - key: MERCHANT_WALLET
         sync: false
       - key: BRIGHTDATA_CUSTOMER_ID
@@ -23,4 +27,4 @@ services:
       - key: BRIGHTDATA_PASSWORD
         sync: false
       - key: ALLOWED_ORIGINS
-        value: "https://shepants.netlify.app,https://beigesneaker.netlify.app,http://localhost:3000"
+        value: "https://reilly-dress.netlify.app,https://beigesneaker.netlify.app,https://auralo-sneakers.netlify.app,http://localhost:3000"
