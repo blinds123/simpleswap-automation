@@ -53,7 +53,16 @@ const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_Z
 const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
 
 // CORS - allow configured origins with explicit preflight handling
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5500')
+// Default includes common Netlify production sites + localhost for development
+const DEFAULT_ORIGINS = [
+    'http://localhost:3000',
+    'http://localhost:5500',
+    'https://reilly-dress.netlify.app',
+    'https://beigesneaker.netlify.app',
+    'https://auralo-sneakers.netlify.app'
+].join(',');
+
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || DEFAULT_ORIGINS)
     .split(',')
     .map(o => o.trim());
 
