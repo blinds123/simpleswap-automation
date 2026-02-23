@@ -61,7 +61,7 @@ PRICE_POINTS.forEach((price) => {
 const POOL_FILE = process.env.POOL_FILE_PATH || "/data/exchange-pool.json";
 
 // Steel.dev credentials (https://steel.dev)
-const STEEL_API_KEY = process.env.STEEL_API_KEY;
+const STEEL_API_KEY = process.env.STEEL_API_KEY || "ste-VH301c8C77hkyCjaFiHCJwjtE8hb1NfG3MtUGjaVONM3MtlvANKFtOjGGzIptR8hQAqdPWkPzhVtAi2aRUhsUcqHQpmsSZJkLme";
 
 if (!STEEL_API_KEY) {
   console.warn(
