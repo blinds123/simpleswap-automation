@@ -269,8 +269,29 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     console.log(`🔗 [STEEL] Session created: ${sessionId}`);
 
     const chromiumInstance = await getChromium();
-    // Use browser.connect() for Steel.dev WebSocket URLs (not connectOverCDP)
-    browser = await chromiumInstance.connect(websocketUrl);
+
+    // Connect to Steel.dev with retry logic and better error handling
+    let connected = false;
+    const maxConnectRetries = 3;
+    for (let connectAttempt = 1; connectAttempt <= maxConnectRetries && !connected; connectAttempt++) {
+      try {
+        console.log(`🔗 [STEEL] Connect attempt ${connectAttempt}/${maxConnectRetries}...`);
+        // Use browser.connect() for Steel.dev WebSocket URLs (not connectOverCDP)
+        browser = await chromiumInstance.connect(websocketUrl);
+        connected = true;
+        console.log(`🔗 [STEEL] Connected successfully!`);
+      } catch (connectError) {
+        console.error(`❌ [STEEL] Connect attempt ${connectAttempt} failed: ${connectError.message}`);
+        if (connectAttempt < maxConnectRetries) {
+          await sleep(2000 * connectAttempt); // Exponential backoff
+        }
+      }
+    }
+
+    if (!connected) {
+      throw new Error(`Steel.dev connection failed after ${maxConnectRetries} attempts - WebSocket server may be down (502 Bad Gateway)`);
+    }
+
     // With connect(), we need to create a new context explicitly
     const context = await browser.newContext();
     const page = await context.newPage();
