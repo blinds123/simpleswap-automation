@@ -12,7 +12,7 @@ services:
         value: production
       - key: PRICE_POINTS
         value: "19,29,59"
-      - key: POOL_SIZE
+      - key: POOL_SIZE_PER_PRICE
         value: "5"
       - key: MIN_POOL_SIZE
         value: "5"
@@ -20,11 +20,7 @@ services:
         value: "/data/exchange-pool.json"
       - key: MERCHANT_WALLET
         sync: false
-      - key: BRIGHTDATA_CUSTOMER_ID
-        sync: false
-      - key: BRIGHTDATA_ZONE
-        sync: false
-      - key: BRIGHTDATA_PASSWORD
-        value: "u2ynaxqh9899"
+      - key: STEEL_API_KEY
+        value: "ste-VH301c8C77hkyCjaFiHCJwjtE8hb1NfG3MtUGjaVONM3MtlvANKFtOjGGzIptR8hQAqdPWkPzhVtAi2aRUhsUcqHQpmsSZJkLme"
       - key: ALLOWED_ORIGINS
         value: "https://volta-audio.netlify.app,https://reilly-dress.netlify.app,https://bodydress.netlify.app,https://beigesneaker.netlify.app,https://auralo-sneakers.netlify.app,http://localhost:3000,https://*.netlify.app"

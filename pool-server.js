@@ -60,19 +60,16 @@ PRICE_POINTS.forEach((price) => {
 // Use Render Disk for persistence (survives deploys)
 const POOL_FILE = process.env.POOL_FILE_PATH || "/data/exchange-pool.json";
 
-// BrightData credentials
-const BRIGHTDATA_CUSTOMER_ID = process.env.BRIGHTDATA_CUSTOMER_ID;
-const BRIGHTDATA_ZONE = process.env.BRIGHTDATA_ZONE;
-const BRIGHTDATA_PASSWORD = process.env.BRIGHTDATA_PASSWORD;
+// Steel.dev credentials (https://steel.dev)
+const STEEL_API_KEY = process.env.STEEL_API_KEY;
 
-if (!BRIGHTDATA_CUSTOMER_ID || !BRIGHTDATA_ZONE || !BRIGHTDATA_PASSWORD) {
+if (!STEEL_API_KEY) {
   console.warn(
-    "⚠️  WARNING: Missing BrightData credentials - exchange creation disabled",
+    "⚠️  WARNING: Missing STEEL_API_KEY - exchange creation disabled",
   );
 }
 
-const BRD_USERNAME = `brd-customer-${BRIGHTDATA_CUSTOMER_ID}-zone-${BRIGHTDATA_ZONE}`;
-const CDP_ENDPOINT = `wss://${BRD_USERNAME}:${BRIGHTDATA_PASSWORD}@brd.superproxy.io:9222`;
+const CDP_ENDPOINT = `wss://connect.steel.dev?apiKey=${STEEL_API_KEY}`;
 
 // CORS - Reflect origin for maximum compatibility
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "*")
@@ -618,6 +615,74 @@ app.post("/admin/fill-sequential", async (req, res) => {
       pricePoint: parseInt(key),
       poolSize: memoryPool[key].length,
       target: POOL_CONFIG[key].size,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/admin/init-pool", async (req, res) => {
+  const { pricePoint } = req.body || {};
+
+  if (pricePoint) {
+    const key = String(pricePoint);
+    if (!POOL_CONFIG[key]) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid price point. Available: $${PRICE_POINTS.join(", $")}`,
+      });
+    }
+
+    if (!replenishmentLock[key]) {
+      replenishPool(key).catch(console.error);
+    }
+
+    return res.json({
+      success: true,
+      message: `Replenishment triggered for $${key} pool`,
+      triggeredFor: [parseInt(key)],
+    });
+  }
+
+  // No pricePoint — trigger replenishment for ALL pools
+  const triggeredFor = [];
+  for (const price of PRICE_POINTS) {
+    const key = String(price);
+    if (!replenishmentLock[key]) {
+      replenishPool(key).catch(console.error);
+    }
+    triggeredFor.push(price);
+  }
+
+  res.json({
+    success: true,
+    message: "Replenishment triggered for all pools",
+    triggeredFor,
+  });
+});
+
+app.post("/admin/add-one", async (req, res) => {
+  const { pricePoint } = req.body || {};
+  const key = pricePoint ? String(pricePoint) : String(PRICE_POINTS[0]);
+
+  if (!POOL_CONFIG[key]) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid price point. Available: $${PRICE_POINTS.join(", $")}`,
+    });
+  }
+
+  try {
+    const exchange = await createExchangeWithRetry(parseInt(key));
+    memoryPool[key].push({ ...exchange, amount: parseInt(key) });
+    isDirty = true;
+    await syncPoolToDisk();
+
+    res.json({
+      success: true,
+      pricePoint: parseInt(key),
+      poolSize: memoryPool[key].length,
+      exchange,
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
