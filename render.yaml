@@ -13,9 +13,9 @@ services:
       - key: PRICE_POINTS
         value: "19,29,59"
       - key: POOL_SIZE
-        value: "10"
+        value: "5"
       - key: MIN_POOL_SIZE
-        value: "3"
+        value: "5"
       - key: POOL_FILE_PATH
         value: "/data/exchange-pool.json"
       - key: MERCHANT_WALLET
