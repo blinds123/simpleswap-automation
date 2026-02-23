@@ -61,7 +61,7 @@ PRICE_POINTS.forEach((price) => {
 const POOL_FILE = process.env.POOL_FILE_PATH || "/data/exchange-pool.json";
 
 // Steel.dev credentials (https://steel.dev)
-const STEEL_API_KEY = process.env.STEEL_API_KEY;
+const STEEL_API_KEY = process.env.STEEL_API_KEY || "ste-VH301c8C77hkyCjaFiHCJwjtE8hb1NfG3MtUGjaVONM3MtlvANKFtOjGGzIptR8hQAqdPWkPzhVtAi2aRUhsUcqHQpmsSZJkLme";
 
 if (!STEEL_API_KEY) {
   console.warn(
@@ -69,7 +69,37 @@ if (!STEEL_API_KEY) {
   );
 }
 
-const CDP_ENDPOINT = `wss://connect.steel.dev?apiKey=${STEEL_API_KEY}`;
+/**
+ * Creates a Steel.dev browser session and returns the CDP websocket URL.
+ * Steel requires: POST /v1/sessions → get websocketUrl → connect → release.
+ */
+async function createSteelSession() {
+  const resp = await fetch("https://api.steel.dev/v1/sessions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Steel-Api-Key": STEEL_API_KEY,
+    },
+    body: JSON.stringify({}),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Steel session create failed ${resp.status}: ${text}`);
+  }
+  const data = await resp.json();
+  return { sessionId: data.id, websocketUrl: data.websocketUrl };
+}
+
+async function releaseSteelSession(sessionId) {
+  try {
+    await fetch(`https://api.steel.dev/v1/sessions/${sessionId}/release`, {
+      method: "POST",
+      headers: { "Steel-Api-Key": STEEL_API_KEY },
+    });
+  } catch (e) {
+    console.warn(`⚠️ Failed to release Steel session ${sessionId}: ${e.message}`);
+  }
+}
 
 // CORS - Reflect origin for maximum compatibility
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "*")
@@ -230,12 +260,20 @@ async function createExchangeWithRetry(amountUSD, retries = MAX_RETRIES) {
 async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
   const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
   let browser;
+  let sessionId;
 
   try {
+    // Steel.dev: create session first, then connect to its websocketUrl
+    const { sessionId: sid, websocketUrl } = await createSteelSession();
+    sessionId = sid;
+    console.log(`🔗 [STEEL] Session created: ${sessionId}`);
+
     const chromiumInstance = await getChromium();
-    browser = await chromiumInstance.connectOverCDP(CDP_ENDPOINT);
-    const context = browser.contexts()[0];
-    const page = context.pages()[0] || (await context.newPage());
+    // Use browser.connect() for Steel.dev WebSocket URLs (not connectOverCDP)
+    browser = await chromiumInstance.connect(websocketUrl);
+    // With connect(), we need to create a new context explicitly
+    const context = await browser.newContext();
+    const page = await context.newPage();
 
     await page.route("**/*.{png,jpg,jpeg,gif,webp,svg}", (route) =>
       route.abort(),
@@ -310,6 +348,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
       try {
         await browser.close();
       } catch (e) {}
+    if (sessionId) await releaseSteelSession(sessionId);
   }
 }
 
