@@ -228,7 +228,7 @@ async function createExchangeWithRetry(amountUSD, retries = MAX_RETRIES) {
 }
 
 async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
-  const url = `https://swappingsimple.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
+  const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
   let browser;
 
   try {
