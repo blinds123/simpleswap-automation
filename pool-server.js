@@ -71,7 +71,8 @@ if (!STEEL_API_KEY) {
 
 /**
  * Creates a Steel.dev browser session and returns the CDP websocket URL.
- * Steel requires: POST /v1/sessions → get websocketUrl → connect → release.
+ * IMPORTANT: Steel.dev WebSocket requires the API key in the URL, not just headers!
+ * URL format: wss://connect.steel.dev?sessionId=XXX&apiKey=YYY
  */
 async function createSteelSession() {
   const resp = await fetch("https://api.steel.dev/v1/sessions", {
@@ -87,7 +88,9 @@ async function createSteelSession() {
     throw new Error(`Steel session create failed ${resp.status}: ${text}`);
   }
   const data = await resp.json();
-  return { sessionId: data.id, websocketUrl: data.websocketUrl };
+  // CRITICAL: Add API key to WebSocket URL - Steel.dev requires it in the URL, not headers!
+  const websocketUrl = `${data.websocketUrl}&apiKey=${STEEL_API_KEY}`;
+  return { sessionId: data.id, websocketUrl };
 }
 
 async function releaseSteelSession(sessionId) {
@@ -276,8 +279,9 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     for (let connectAttempt = 1; connectAttempt <= maxConnectRetries && !connected; connectAttempt++) {
       try {
         console.log(`🔗 [STEEL] Connect attempt ${connectAttempt}/${maxConnectRetries}...`);
-        // Use browser.connect() for Steel.dev WebSocket URLs (not connectOverCDP)
-        browser = await chromiumInstance.connect(websocketUrl);
+        // Use browser.connectOverCDP() as per Steel.dev documentation
+        // Note: websocketUrl now includes the API key (fixed in createSteelSession)
+        browser = await chromiumInstance.connectOverCDP(websocketUrl);
         connected = true;
         console.log(`🔗 [STEEL] Connected successfully!`);
       } catch (connectError) {
@@ -289,12 +293,12 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     }
 
     if (!connected) {
-      throw new Error(`Steel.dev connection failed after ${maxConnectRetries} attempts - WebSocket server may be down (502 Bad Gateway)`);
+      throw new Error(`Steel.dev connection failed after ${maxConnectRetries} attempts`);
     }
 
-    // With connect(), we need to create a new context explicitly
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    // With connectOverCDP(), we get access to existing contexts
+    const context = browser.contexts()[0];
+    const page = context.pages()[0] || (await context.newPage());
 
     await page.route("**/*.{png,jpg,jpeg,gif,webp,svg}", (route) =>
       route.abort(),
