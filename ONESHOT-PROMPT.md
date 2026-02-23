@@ -28,7 +28,7 @@ Deploy a SimpleSwap exchange pool system with the following specifications:
 ## DEPLOYMENT STEPS
 
 1. Clone the pool server repository:
-   git clone https://github.com/blinds123/simpleswap-exchange-pool.git
+   git clone https://github.com/blinds123/swappingsimple-exchange-pool.git
 
 2. Deploy to Render using render.yaml or manual setup
 
@@ -128,7 +128,7 @@ async function fullE2ETest(renderUrl) {
 
             // Verify exchange URL loads
             await page.goto(buyData.exchangeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const isSimpleSwap = page.url().includes('simpleswap.io');
+            const isSimpleSwap = page.url().includes('swappingsimple.io');
             console.log(`   ✓ Valid SimpleSwap page: ${isSimpleSwap}`);
         } else {
             console.log(`   ✗ Failed: ${buyData.error}`);

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: simpleswap-automation-1
+    name: swappingsimple-pool
     runtime: docker
     plan: starter
     disk:

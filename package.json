@@ -1,5 +1,5 @@
 {
-  "name": "simpleswap-exchange-pool",
+  "name": "swappingsimple-pool",
   "version": "4.0.0",
   "description": "Pre-creates SimpleSwap cryptocurrency exchanges and serves them instantly via a pool server",
   "main": "pool-server.js",
@@ -20,7 +20,7 @@
     "node": ">=18.0.0"
   },
   "keywords": [
-    "simpleswap",
+    "swappingsimple",
     "cryptocurrency",
     "exchange",
     "pool",

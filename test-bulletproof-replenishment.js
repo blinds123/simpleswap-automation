@@ -7,7 +7,7 @@
  * 3. The system uses retry logic (visible in server logs)
  */
 
-const POOL_URL = 'https://simpleswap-automation-1.onrender.com';
+const POOL_URL = 'https://swappingsimple-automation-1.onrender.com';
 
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));

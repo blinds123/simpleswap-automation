@@ -22,8 +22,8 @@ Successfully implemented bulletproof auto-replenishment system with the followin
 ## Service Information
 
 - **Render Service ID:** srv-d4fe0u7pm1nc73et6dkg
-- **GitHub Repository:** https://github.com/blinds123/simpleswap-automation
-- **Live URL:** https://simpleswap-automation-1.onrender.com
+- **GitHub Repository:** https://github.com/blinds123/swappingsimple-automation
+- **Live URL:** https://swappingsimple-automation-1.onrender.com
 - **Deployment Status:** LIVE (deployed 2025-11-27 01:08:47 UTC)
 - **Version:** 12.0.0 (was 11.0.0)
 

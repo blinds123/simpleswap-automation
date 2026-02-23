@@ -39,7 +39,7 @@ This system pre-creates SimpleSwap exchanges so customers clicking "Buy Now" get
 
 ### Step 1: Fork Repository
 ```bash
-git clone https://github.com/blinds123/simpleswap-exchange-pool.git my-pool
+git clone https://github.com/blinds123/swappingsimple-exchange-pool.git my-pool
 cd my-pool
 ```
 
@@ -134,7 +134,7 @@ curl -X POST https://YOUR-APP.onrender.com/buy-now \
 # Response:
 {
   "success": true,
-  "exchangeUrl": "https://simpleswap.io/exchange?id=abc123xyz",
+  "exchangeUrl": "https://swappingsimple.io/exchange?id=abc123xyz",
   "poolStatus": "healthy"
 }
 ```
@@ -225,7 +225,7 @@ async function testPool() {
     const page = await browser.newPage();
     await page.goto(data.exchangeUrl);
 
-    const isSimpleSwap = page.url().includes('simpleswap.io');
+    const isSimpleSwap = page.url().includes('swappingsimple.io');
     console.log('Valid SimpleSwap page:', isSimpleSwap);
 
     await browser.close();

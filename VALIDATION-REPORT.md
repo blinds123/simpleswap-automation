@@ -30,7 +30,7 @@ The code is syntactically valid, well-structured, and production-ready. No synta
 ### Package Configuration
 ```json
 {
-  "name": "simpleswap-exchange-pool",
+  "name": "swappingsimple-exchange-pool",
   "version": "3.0.0",
   "type": "module",
   "main": "pool-server.js",

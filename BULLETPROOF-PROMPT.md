@@ -73,7 +73,7 @@ MIN_POOL_SIZE=3
 
 # === DEPLOYMENT URLS (filled automatically during deployment) ===
 RENDER_SERVICE_ID=srv-d4fe0u7pm1nc73et6dkg
-RENDER_URL=https://simpleswap-automation-1.onrender.com
+RENDER_URL=https://swappingsimple-automation-1.onrender.com
 NETLIFY_URL=https://shepants.netlify.app
 EOF
 ```
@@ -122,7 +122,7 @@ fi
 
 ### Step 1.1: Clone Repository
 ```bash
-git clone https://github.com/blinds123/simpleswap-exchange-pool.git pool-server
+git clone https://github.com/blinds123/swappingsimple-exchange-pool.git pool-server
 cd pool-server
 ls pool-server.js render.yaml package.json && echo "✓ Files present" || echo "✗ Missing files"
 ```
@@ -141,7 +141,7 @@ if [ -n "$STATUS" ]; then
 else
   echo "Need to create Render service via dashboard:"
   echo "1. Go to render.com → New → Web Service"
-  echo "2. Connect repo: blinds123/simpleswap-exchange-pool"
+  echo "2. Connect repo: blinds123/swappingsimple-exchange-pool"
   echo "3. Build: npm install | Start: npm start"
 fi
 ```
@@ -238,7 +238,7 @@ For this project, the landing page is already deployed at:
 
 The checkout integration is already configured with:
 ```javascript
-const POOL_SERVER = 'https://simpleswap-automation-1.onrender.com';
+const POOL_SERVER = 'https://swappingsimple-automation-1.onrender.com';
 ```
 
 ### Verify Landing Page
@@ -417,7 +417,7 @@ Merchant:
   Wallet: 0xE5173e7c3089bD89cd1341b637b8e1951745ED5C
 
 URLs:
-  Pool Server: https://simpleswap-automation-1.onrender.com
+  Pool Server: https://swappingsimple-automation-1.onrender.com
   Landing Page: https://shepants.netlify.app
 
 Prices: $19, $29, $59

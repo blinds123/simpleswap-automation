@@ -13,7 +13,7 @@ Then configure `PRICE_POINTS` in the `.env` file accordingly.
 
 ## What This System Does
 
-Pre-creates cryptocurrency exchanges on simpleswap.io and serves them instantly via a pool server. Uses BrightData Scraping Browser to bypass Cloudflare protection.
+Pre-creates cryptocurrency exchanges on swappingsimple.io and serves them instantly via a pool server. Uses BrightData Scraping Browser to bypass Cloudflare protection.
 
 **Scope:** Exchange creation only. No email verification or OTP handling required.
 

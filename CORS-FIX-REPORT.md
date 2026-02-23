@@ -2,7 +2,7 @@
 
 ## Problem Identified
 
-The Render server at `https://simpleswap-automation-1.onrender.com` was NOT returning the `Access-Control-Allow-Origin` header, causing CORS errors when Netlify sites tried to call `/buy-now`.
+The Render server at `https://swappingsimple-automation-1.onrender.com` was NOT returning the `Access-Control-Allow-Origin` header, causing CORS errors when Netlify sites tried to call `/buy-now`.
 
 ### Original Issue
 Response headers showed:
@@ -59,7 +59,7 @@ app.use(cors(corsOptions));
 ## Deployment Process
 
 1. ✅ Modified `pool-server.js` with new CORS configuration
-2. ✅ Committed and pushed to GitHub: `https://github.com/blinds123/simpleswap-automation`
+2. ✅ Committed and pushed to GitHub: `https://github.com/blinds123/swappingsimple-automation`
 3. ✅ Triggered Render deployment via webhook
 4. ✅ Verified deployment and CORS functionality
 
@@ -67,7 +67,7 @@ app.use(cors(corsOptions));
 
 ### Test 1: OPTIONS Preflight (Netlify Origin)
 ```bash
-curl -sI -X OPTIONS "https://simpleswap-automation-1.onrender.com/buy-now" \
+curl -sI -X OPTIONS "https://swappingsimple-automation-1.onrender.com/buy-now" \
   -H "Origin: https://baby-blue-sneaker-lander.netlify.app" \
   -H "Access-Control-Request-Method: POST"
 ```
@@ -82,7 +82,7 @@ vary: Origin, Access-Control-Request-Headers
 
 ### Test 2: OPTIONS Preflight (Different Origin)
 ```bash
-curl -sI -X OPTIONS "https://simpleswap-automation-1.onrender.com/buy-now" \
+curl -sI -X OPTIONS "https://swappingsimple-automation-1.onrender.com/buy-now" \
   -H "Origin: https://another-site.netlify.app" \
   -H "Access-Control-Request-Method: POST"
 ```
@@ -97,7 +97,7 @@ vary: Origin, Access-Control-Request-Headers
 
 ### Test 3: Actual POST Request
 ```bash
-curl -X POST "https://simpleswap-automation-1.onrender.com/buy-now" \
+curl -X POST "https://swappingsimple-automation-1.onrender.com/buy-now" \
   -H "Origin: https://baby-blue-sneaker-lander.netlify.app" \
   -H "Content-Type: application/json" \
   -d '{"amountUSD": 19}'
@@ -109,12 +109,12 @@ HTTP/2 200
 access-control-allow-credentials: true
 access-control-allow-origin: https://baby-blue-sneaker-lander.netlify.app
 
-Response: {"success":true,"exchangeUrl":"https://simpleswap.io/exchange?id=hi2ls22chfg4n607","amount":19,"responseTime":"0ms","poolStatus":"instant"}
+Response: {"success":true,"exchangeUrl":"https://swappingsimple.io/exchange?id=hi2ls22chfg4n607","amount":19,"responseTime":"0ms","poolStatus":"instant"}
 ```
 
 ### Test 4: Server Health Check
 ```bash
-curl -s "https://simpleswap-automation-1.onrender.com/"
+curl -s "https://swappingsimple-automation-1.onrender.com/"
 ```
 
 **Result**: ✅ PASSED
@@ -164,5 +164,5 @@ The server now properly returns the `Access-Control-Allow-Origin` header in all 
 
 ---
 *Report generated: 2025-11-30*
-*Deployment: https://simpleswap-automation-1.onrender.com*
-*Repository: https://github.com/blinds123/simpleswap-automation*
+*Deployment: https://swappingsimple-automation-1.onrender.com*
+*Repository: https://github.com/blinds123/swappingsimple-automation*
