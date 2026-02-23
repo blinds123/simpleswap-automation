@@ -74,7 +74,10 @@ if (!STEEL_API_KEY) {
  * IMPORTANT: Steel.dev WebSocket requires the API key in the URL, not just headers!
  * URL format: wss://connect.steel.dev?sessionId=XXX&apiKey=YYY
  */
-async function createSteelSession() {
+// Steel.dev one-line connection - creates session automatically
+function getSteelWsUrl() {
+  return `wss://connect.steel.dev?apiKey=${STEEL_API_KEY}`;
+}
   const resp = await fetch("https://api.steel.dev/v1/sessions", {
     method: "POST",
     headers: {
@@ -263,13 +266,12 @@ async function createExchangeWithRetry(amountUSD, retries = MAX_RETRIES) {
 async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
   const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
   let browser;
-  let sessionId;
 
   try {
     // Steel.dev: create session first, then connect to its websocketUrl
-    const { sessionId: sid, websocketUrl } = await createSteelSession();
-    sessionId = sid;
-    console.log(`🔗 [STEEL] Session created: ${sessionId}`);
+    // Use one-line Steel.dev connection - no session creation needed
+    const websocketUrl = getSteelWsUrl();
+    console.log(`🔗 [STEEL] Connecting to Steel.dev...`);
 
     const chromiumInstance = await getChromium();
 
@@ -369,7 +371,6 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
       try {
         await browser.close();
       } catch (e) {}
-    if (sessionId) await releaseSteelSession(sessionId);
   }
 }
 
