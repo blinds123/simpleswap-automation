@@ -265,6 +265,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
   console.log(`[MEM] Heap used: ${Math.round(startMem.heapUsed/1024/1024)}MB`);
   console.log(`[MEM] CPU cores: ${require('os').cpus().length}, uptime: ${process.uptime()}s`);
   const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
+  console.log(`[TIMING] ${Date.now()} - STEP 1: URL constructed: ${url}`);
   let browser;
   let sessionId;
 
@@ -273,6 +274,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     const { sessionId: sid, websocketUrl } = await createSteelSession();
     sessionId = sid;
     console.log(`🔗 [STEEL] Session created: ${sessionId}`);
+    console.log(`[TIMING] ${Date.now()} - STEP 2: Steel session ${sessionId} created`);
 
     const chromiumInstance = await getChromium();
 
@@ -287,6 +289,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
         browser = await chromiumInstance.connectOverCDP(websocketUrl);
         connected = true;
         console.log(`🔗 [STEEL] Connected successfully!`);
+        console.log(`[TIMING] ${Date.now()} - STEP 3: CDP connected`);
       } catch (connectError) {
         console.error(`❌ [STEEL] Connect attempt ${connectAttempt} failed: ${connectError.message}`);
         if (connectAttempt < maxConnectRetries) {
@@ -301,12 +304,21 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
 
     // With connectOverCDP(), we get access to existing contexts
     const context = browser.contexts()[0];
+    console.log(`[STEEL] CDP context: ${JSON.stringify({pagesCount: context.pages().length, browserContexts: browser.contexts().length})}`);
+
     const page = context.pages()[0] || (await context.newPage());
+    console.log(`[STEEL] Using page index: ${page.url()}`);
+
+    // Detect when Steel sessions drop
+    browser.on('disconnected', () => {
+      console.error(`[STEEL] Browser disconnected - Steel session may have dropped`);
+    });
 
     await page.route("**/*.{png,jpg,jpeg,gif,webp,svg}", (route) =>
       route.abort(),
     );
     await page.goto(url, { waitUntil: "networkidle", timeout: 120000 });
+    console.log(`[TIMING] ${Date.now()} - STEP 4: Page loaded`);
 
     await page.evaluate(() => {
       document
@@ -320,6 +332,8 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     await addressInput.first().fill(walletAddress, { timeout: 30000 });
     await page.waitForTimeout(2000);
     await addressInput.first().press("Enter");
+    console.log(`[TIMING] ${Date.now()} - STEP 5: Address filled`);
+    console.log(`[TIMING] ${Date.now()} - STEP 6: Enter pressed`);
 
     try {
       await page.waitForFunction(
@@ -331,6 +345,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
         },
         { timeout: 30000 },
       );
+      console.log(`[TIMING] ${Date.now()} - STEP 7: Rate input populated`);
     } catch (e) {
       console.error(`[EXCHANGE] waitForFunction timeout at line 322 — rate input did not populate. URL: ${page.url()}`);
       try {
@@ -359,6 +374,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     const isDisabled = await createButton.first().isDisabled();
     if (!isDisabled) {
       await createButton.first().click({ timeout: 10000 });
+      console.log(`[TIMING] ${Date.now()} - STEP 8: Button clicked`);
       await page.waitForTimeout(2000);
       if (page.url().includes("/exchange?")) {
         await createButton.first().click({ force: true });
@@ -369,6 +385,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
 
     console.log(`[EXCHANGE] Waiting for exchange URL...`);
     await page.waitForURL(/\/exchange\?id=/, { timeout: 120000 });
+    console.log(`[TIMING] ${Date.now()} - STEP 9: Exchange URL detected`);
     console.log(`[EXCHANGE] Exchange URL detected: ${page.url()}`);
     const exchangeUrl = page.url();
     const exchangeId = new URL(exchangeUrl).searchParams.get("id");
@@ -753,6 +770,13 @@ app.post("/admin/add-one", async (req, res) => {
     });
   }
 
+  // If pool is empty, trigger background replenishment and return immediately
+  // This prevents 502 errors from Render's 120s request timeout
+  if (!memoryPool[key] || memoryPool[key].length === 0) {
+    replenishPool(key).catch(console.error);
+    return res.status(202).json({ status: "queued", price: key });
+  }
+
   try {
     const exchange = await createExchangeWithRetry(parseInt(key));
     memoryPool[key].push({ ...exchange, amount: parseInt(key) });
@@ -768,6 +792,19 @@ app.post("/admin/add-one", async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+app.get("/admin/pool", (req, res) => {
+  res.json({
+    pools: {
+      "19": memoryPool["19"],
+      "29": memoryPool["29"],
+      "59": memoryPool["59"],
+    },
+    config: POOL_CONFIG,
+    stats: stats,
+    serverStartTime: serverStartTime,
+  });
 });
 
 // ============================================================================
