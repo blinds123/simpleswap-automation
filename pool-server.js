@@ -261,6 +261,9 @@ async function createExchangeWithRetry(amountUSD, retries = MAX_RETRIES) {
 }
 
 async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
+  const startMem = process.memoryUsage();
+  console.log(`[MEM] Heap used: ${Math.round(startMem.heapUsed/1024/1024)}MB`);
+  console.log(`[MEM] CPU cores: ${require('os').cpus().length}, uptime: ${process.uptime()}s`);
   const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
   let browser;
   let sessionId;
@@ -303,7 +306,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     await page.route("**/*.{png,jpg,jpeg,gif,webp,svg}", (route) =>
       route.abort(),
     );
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
+    await page.goto(url, { waitUntil: "networkidle", timeout: 120000 });
 
     await page.evaluate(() => {
       document
@@ -364,7 +367,9 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
       throw new Error("Button still disabled");
     }
 
+    console.log(`[EXCHANGE] Waiting for exchange URL...`);
     await page.waitForURL(/\/exchange\?id=/, { timeout: 120000 });
+    console.log(`[EXCHANGE] Exchange URL detected: ${page.url()}`);
     const exchangeUrl = page.url();
     const exchangeId = new URL(exchangeUrl).searchParams.get("id");
 
@@ -383,6 +388,8 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
         await browser.close();
       } catch (e) {}
     if (sessionId) await releaseSteelSession(sessionId);
+    const endMem = process.memoryUsage();
+    console.log(`[MEM] After cleanup - Heap used: ${Math.round(endMem.heapUsed/1024/1024)}MB delta: ${Math.round((endMem.heapUsed-startMem.heapUsed)/1024/1024)}MB`);
   }
 }
 
