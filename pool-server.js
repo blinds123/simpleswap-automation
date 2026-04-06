@@ -317,7 +317,13 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     await page.route("**/*.{png,jpg,jpeg,gif,webp,svg}", (route) =>
       route.abort(),
     );
-    await page.goto(url, { waitUntil: "networkidle", timeout: 120000 });
+    try {
+      await page.goto(url, { waitUntil: "load", timeout: 60000 });
+    } catch (loadErr) {
+      // Fallback to domcontentloaded if load times out
+      console.log(`[EXCHANGE] load timeout, falling back to domcontentloaded`);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    }
     console.log(`[TIMING] ${Date.now()} - STEP 4: Page loaded`);
 
     await page.evaluate(() => {
@@ -328,10 +334,12 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
         .forEach((el) => el.remove());
     });
 
-    const addressInput = page.getByRole("textbox", { name: /address/i });
-    await addressInput.first().fill(walletAddress, { timeout: 30000 });
+    // Wait for form to be ready (SPA may not have rendered yet)
+    await page.waitForSelector('[data-testid="wallet-address-input-field"]', { timeout: 30000 });
+    const addressInput = page.locator('[data-testid="wallet-address-input-field"]');
+    await addressInput.fill(walletAddress, { timeout: 30000 });
     await page.waitForTimeout(2000);
-    await addressInput.first().press("Enter");
+    await addressInput.press("Enter");
     console.log(`[TIMING] ${Date.now()} - STEP 5: Address filled`);
     console.log(`[TIMING] ${Date.now()} - STEP 6: Enter pressed`);
 
