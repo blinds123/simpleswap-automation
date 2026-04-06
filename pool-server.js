@@ -363,7 +363,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
           const val = inputs[1].value;
           return val && val.length > 0 && val !== "0" && !val.includes("...");
         },
-        { timeout: 30000 },
+        { timeout: 60000 },
       );
       console.log(`[TIMING] ${Date.now()} - STEP 7: Rate input populated`);
     } catch (e) {
