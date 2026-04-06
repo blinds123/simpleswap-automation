@@ -74,10 +74,7 @@ if (!STEEL_API_KEY) {
  * IMPORTANT: Steel.dev WebSocket requires the API key in the URL, not just headers!
  * URL format: wss://connect.steel.dev?sessionId=XXX&apiKey=YYY
  */
-// Steel.dev one-line connection - creates session automatically
-function getSteelWsUrl() {
-  return `wss://connect.steel.dev?apiKey=${STEEL_API_KEY}`;
-}
+async function createSteelSession() {
   const resp = await fetch("https://api.steel.dev/v1/sessions", {
     method: "POST",
     headers: {
@@ -266,28 +263,31 @@ async function createExchangeWithRetry(amountUSD, retries = MAX_RETRIES) {
 async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
   const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
   let browser;
+  let sessionId;
 
   try {
     // Steel.dev: create session first, then connect to its websocketUrl
-    // Use one-line Steel.dev connection - no session creation needed
-    const websocketUrl = getSteelWsUrl();
-    console.log(`🔗 [STEEL] Connecting to Steel.dev...`);
+    const { sessionId: sid, websocketUrl } = await createSteelSession();
+    sessionId = sid;
+    console.log(`🔗 [STEEL] Session created: ${sessionId}`);
 
     const chromiumInstance = await getChromium();
 
-    // Connect to Steel.dev with retry logic
+    // Connect to Steel.dev with retry logic and better error handling
     let connected = false;
     const maxConnectRetries = 3;
     for (let connectAttempt = 1; connectAttempt <= maxConnectRetries && !connected; connectAttempt++) {
       try {
         console.log(`🔗 [STEEL] Connect attempt ${connectAttempt}/${maxConnectRetries}...`);
+        // Use browser.connectOverCDP() as per Steel.dev documentation
+        // Note: websocketUrl now includes the API key (fixed in createSteelSession)
         browser = await chromiumInstance.connectOverCDP(websocketUrl);
         connected = true;
         console.log(`🔗 [STEEL] Connected successfully!`);
       } catch (connectError) {
         console.error(`❌ [STEEL] Connect attempt ${connectAttempt} failed: ${connectError.message}`);
         if (connectAttempt < maxConnectRetries) {
-          await sleep(2000 * connectAttempt);
+          await sleep(2000 * connectAttempt); // Exponential backoff
         }
       }
     }
@@ -295,6 +295,8 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     if (!connected) {
       throw new Error(`Steel.dev connection failed after ${maxConnectRetries} attempts`);
     }
+
+    // With connectOverCDP(), we get access to existing contexts
     const context = browser.contexts()[0];
     const page = context.pages()[0] || (await context.newPage());
 
@@ -371,6 +373,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
       try {
         await browser.close();
       } catch (e) {}
+    if (sessionId) await releaseSteelSession(sessionId);
   }
 }
 
@@ -455,8 +458,9 @@ async function healthCheck() {
 
     console.log(`  ${status} $${key}: ${current}/${target}`);
 
-    // If pool is below target AND not currently replenishing, trigger replenishment
-    if (current < target && !replenishmentLock[key]) {
+    // If pool is COMPLETELY empty (not just below target), trigger replenishment
+    // This prevents constant replenishment attempts when pool is partially full (5/15)
+    if (current === 0 && !replenishmentLock[key]) {
       anyPoolNeedsReplenishment = true;
       console.log(`  🔧 Triggering replenishment for $${key}...`);
       replenishPool(key).catch((err) =>
