@@ -1,132 +1,150 @@
-/**
- * Test: Bulletproof Auto-Replenishment with Retry Logic
- *
- * This test verifies:
- * 1. Pool targets are 10 (not 5)
- * 2. When an exchange is consumed, replenishment starts immediately
- * 3. The system uses retry logic (visible in server logs)
- */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
-const POOL_URL = 'https://swappingsimple-automation-1.onrender.com';
+const SERVER_START_TIMEOUT_MS = 10000;
+const REQUEST_TIMEOUT_MS = 3000;
 
-async function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+async function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function checkPoolStatus() {
-    const response = await fetch(`${POOL_URL}/health/pools`);
-    const data = await response.json();
-    return data;
+async function withTempDir(run) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'simpleswap-test-'));
+  try {
+    return await run(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
-async function initializePool() {
-    console.log('🔧 Initializing pool...');
-    const response = await fetch(`${POOL_URL}/admin/init-pool`, {
-        method: 'POST'
+async function startServer(seedPools) {
+  return withTempDir(async (dir) => {
+    const poolFile = path.join(dir, 'exchange-pool.json');
+    await writeFile(poolFile, JSON.stringify(seedPools, null, 2), 'utf8');
+
+    const port = 4100 + Math.floor(Math.random() * 1000);
+    const child = spawn(process.execPath, ['pool-server.js'], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PORT: String(port),
+        NODE_ENV: 'test',
+        MERCHANT_WALLET: '0x1372Ad41B513b9d6eC008086C03d69C635bAE578',
+        PRICE_POINTS: '19,29,59',
+        POOL_SIZE_PER_PRICE: '5',
+        MIN_POOL_SIZE: '5',
+        POOL_FILE_PATH: poolFile,
+        STEEL_API_KEY: 'test-key',
+        RENDER_EXTERNAL_URL: `http://127.0.0.1:${port}`,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const data = await response.json();
-    console.log('✅ Pool initialized:', data);
-    return data;
-}
 
-async function consumeExchange(amountUSD) {
-    console.log(`\n💰 Consuming exchange for $${amountUSD}...`);
-    const response = await fetch(`${POOL_URL}/buy-now`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountUSD })
+    let logs = '';
+    child.stdout.on('data', (chunk) => {
+      logs += chunk.toString();
     });
-    const data = await response.json();
-    console.log(`✅ Exchange consumed:`, data);
-    return data;
-}
+    child.stderr.on('data', (chunk) => {
+      logs += chunk.toString();
+    });
 
-async function runTest() {
-    console.log('🧪 BULLETPROOF AUTO-REPLENISHMENT TEST\n');
-    console.log('=' .repeat(60));
-
-    // Step 1: Check pool targets
-    console.log('\n📊 Step 1: Verify pool targets are 10');
-    const initialStatus = await checkPoolStatus();
-    console.log('Pool targets:');
-    Object.entries(initialStatus.pools).forEach(([price, info]) => {
-        console.log(`  $${price}: target=${info.target} (expected: 10)`);
-        if (info.target !== 10) {
-            console.error(`❌ FAIL: Pool $${price} target is ${info.target}, expected 10`);
-            process.exit(1);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < SERVER_START_TIMEOUT_MS) {
+      try {
+        const response = await fetch(`${baseUrl}/health`);
+        if (response.ok) {
+          return {
+            baseUrl,
+            logsRef: () => logs,
+            stop: async () => {
+              child.kill('SIGTERM');
+              await Promise.race([
+                new Promise((resolve) => child.once('exit', resolve)),
+                wait(2000).then(() => {
+                  if (!child.killed) child.kill('SIGKILL');
+                }),
+              ]);
+            },
+          };
         }
-    });
-    console.log('✅ PASS: All pools have target=10');
-
-    // Step 2: Initialize pool (if needed)
-    if (initialStatus.status === 'degraded' || initialStatus.pools['29'].size === 0) {
-        await initializePool();
-        await sleep(5000); // Wait for initialization
+      } catch {
+        // Retry until the server is ready.
+      }
+      if (child.exitCode !== null) {
+        throw new Error(`Server exited early with code ${child.exitCode}\n${logs}`);
+      }
+      await wait(200);
     }
 
-    // Step 3: Check pool status before consumption
-    console.log('\n📊 Step 2: Check pool status before consumption');
-    const beforeStatus = await checkPoolStatus();
-    const pool29Before = beforeStatus.pools['29'].size;
-    console.log(`$29 Pool: ${pool29Before}/10`);
-
-    // Step 4: Consume an exchange
-    console.log('\n📊 Step 3: Consume an exchange from $29 pool');
-    await consumeExchange(29);
-
-    // Step 5: Verify pool decreased
-    console.log('\n📊 Step 4: Verify pool size decreased');
-    await sleep(2000); // Brief delay
-    const afterStatus = await checkPoolStatus();
-    const pool29After = afterStatus.pools['29'].size;
-    console.log(`$29 Pool: ${pool29After}/10 (was ${pool29Before})`);
-
-    if (pool29After !== pool29Before - 1) {
-        console.error(`❌ FAIL: Pool size should be ${pool29Before - 1}, got ${pool29After}`);
-        process.exit(1);
-    }
-    console.log('✅ PASS: Pool size decreased correctly');
-
-    // Step 6: Check if replenishment is triggered
-    console.log('\n📊 Step 5: Check if replenishment is triggered');
-    const replenishStatus = afterStatus.isReplenishing['29'];
-    console.log(`Replenishment status for $29 pool: ${replenishStatus}`);
-
-    if (!replenishStatus) {
-        console.log('⚠️  Replenishment may have already completed (very fast)');
-        console.log('Checking if pool size has been restored...');
-
-        // Wait and check again
-        await sleep(10000);
-        const finalStatus = await checkPoolStatus();
-        const pool29Final = finalStatus.pools['29'].size;
-        console.log(`$29 Pool now: ${pool29Final}/10`);
-
-        if (pool29Final === pool29Before) {
-            console.log('✅ PASS: Pool has been replenished back to original size');
-        } else if (pool29Final > pool29After) {
-            console.log(`✅ PASS: Pool is being replenished (${pool29Final}/10)`);
-        } else {
-            console.log('⚠️  WARNING: Pool has not been replenished yet. Check server logs.');
-        }
-    } else {
-        console.log('✅ PASS: Replenishment is in progress');
-    }
-
-    // Step 7: Summary
-    console.log('\n' + '='.repeat(60));
-    console.log('📋 TEST SUMMARY');
-    console.log('='.repeat(60));
-    console.log('✅ Pool targets are 10 (not 5)');
-    console.log('✅ Exchange consumption works');
-    console.log('✅ Auto-replenishment triggers immediately');
-    console.log('\n🎉 BULLETPROOF AUTO-REPLENISHMENT IS WORKING!');
-    console.log('\nNOTE: The retry logic (3 attempts, 5s delay) is visible in server logs.');
-    console.log('Check Render logs to see retry attempts in action if exchanges fail.');
+    child.kill('SIGKILL');
+    throw new Error(`Server did not start within ${SERVER_START_TIMEOUT_MS}ms\n${logs}`);
+  });
 }
 
-// Run the test
-runTest().catch(err => {
-    console.error('❌ Test failed:', err);
-    process.exit(1);
+async function fetchJson(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const body = await response.json();
+    return { response, body };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+test('root/admin endpoints reflect seeded pool state without runtime reference errors', async () => {
+  const server = await startServer({
+    '19': [{ exchangeId: 'seed-19', exchangeUrl: 'https://example.com/19', amount: 19 }],
+    '29': [],
+    '59': [],
+  });
+
+  try {
+    const { body: root } = await fetchJson(`${server.baseUrl}/`);
+    assert.equal(root.status, 'running');
+    assert.equal(root.pools['19'], 1);
+    assert.equal(root.totalSize, 1);
+    assert.ok(root.stats.serverStartTime);
+
+    const { response, body } = await fetchJson(`${server.baseUrl}/admin/add-one`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pricePoint: 19 }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body, { status: 'ok', pool: 1 });
+
+    const { body: adminPool } = await fetchJson(`${server.baseUrl}/admin/pool`);
+    assert.equal(adminPool.pools['19'].length, 1);
+    assert.match(adminPool.serverStartTime, /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test('admin/add-one queues immediately when the target pool is empty', async () => {
+  const server = await startServer({ '19': [], '29': [], '59': [] });
+
+  try {
+    const startedAt = Date.now();
+    const { response, body } = await fetchJson(`${server.baseUrl}/admin/add-one`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pricePoint: 19 }),
+    });
+    const durationMs = Date.now() - startedAt;
+
+    assert.equal(response.status, 202);
+    assert.deepEqual(body, { status: 'queued', price: '19' });
+    assert.ok(durationMs < 1000, `expected an immediate response, got ${durationMs}ms`);
+  } finally {
+    await server.stop();
+  }
 });

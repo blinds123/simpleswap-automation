@@ -14,6 +14,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { readFile, writeFile, rename, unlink } from "fs/promises";
+import os from "node:os";
 import path from "path";
 import { randomBytes } from "crypto";
 import { existsSync } from "fs";
@@ -263,7 +264,7 @@ async function createExchangeWithRetry(amountUSD, retries = MAX_RETRIES) {
 async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
   const startMem = process.memoryUsage();
   console.log(`[MEM] Heap used: ${Math.round(startMem.heapUsed/1024/1024)}MB`);
-  console.log(`[MEM] CPU cores: ${require('os').cpus().length}, uptime: ${process.uptime()}s`);
+  console.log(`[MEM] CPU cores: ${os.cpus().length}, uptime: ${process.uptime()}s`);
   const url = `https://simpleswap.io/exchange?from=usd-usd&to=pol-matic&rate=floating&amount=${amountUSD}`;
   console.log(`[TIMING] ${Date.now()} - STEP 1: URL constructed: ${url}`);
   let browser;
@@ -767,7 +768,7 @@ app.post("/admin/init-pool", async (req, res) => {
   });
 });
 
-app.post("/admin/add-one", (req, res) => {
+app.post("/admin/add-one", async (req, res) => {
   const { pricePoint } = req.body || {};
   const key = pricePoint ? String(pricePoint) : String(PRICE_POINTS[0]);
 
@@ -778,25 +779,18 @@ app.post("/admin/add-one", (req, res) => {
     });
   }
 
-  const poolSize = memoryPool[key]?.length || 0;
-
-  // If the pool already has exchanges, just report current state.
-  // The handoff expects this endpoint to stay non-blocking.
-  if (poolSize > 0) {
-    return res.json({ status: "ok", pool: poolSize });
-  }
-
   // If pool is empty, trigger background replenishment and return immediately.
   // This prevents 502 errors from Render's 120s request timeout.
-  if (!replenishmentLock[key]) {
-    setImmediate(() =>
-      replenishPool(key).catch((error) =>
-        console.error(`❌ [ADMIN] /admin/add-one replenish failed: ${error.message}`),
-      ),
-    );
+  if (!memoryPool[key] || memoryPool[key].length === 0) {
+    setImmediate(() => {
+      replenishPool(key).catch((error) => {
+        console.error(`❌ [ADMIN] Background replenish failed for $${key}: ${error.message}`);
+      });
+    });
+    return res.status(202).json({ status: "queued", price: key });
   }
 
-  return res.status(202).json({ status: "queued", price: key });
+  return res.json({ status: "ok", pool: memoryPool[key].length });
 });
 
 app.get("/admin/pool", (req, res) => {
