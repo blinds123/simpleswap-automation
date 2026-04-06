@@ -355,6 +355,21 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     console.log(`[TIMING] ${Date.now()} - STEP 5: Address filled`);
     console.log(`[TIMING] ${Date.now()} - STEP 6: Enter pressed`);
 
+    // Wait a moment for SimpleSwap SPA to process the address
+    await page.waitForTimeout(3000);
+
+    // Try clicking "Calculate" or "Get rate" button if it appears
+    const calcButton = page.locator("button", { hasText: /calculate|get rate|check/i }).first();
+    try {
+      if (await calcButton.isVisible({ timeout: 5000 })) {
+        await calcButton.click();
+        console.log(`[TIMING] ${Date.now()} - STEP 6b: Calculate button clicked`);
+      }
+    } catch (e) {
+      // No calculate button, proceed
+      console.log(`[EXCHANGE] No calculate button found, relying on auto calculation`);
+    }
+
     try {
       await page.waitForFunction(
         () => {
