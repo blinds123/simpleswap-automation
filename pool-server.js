@@ -767,7 +767,7 @@ app.post("/admin/init-pool", async (req, res) => {
   });
 });
 
-app.post("/admin/add-one", async (req, res) => {
+app.post("/admin/add-one", (req, res) => {
   const { pricePoint } = req.body || {};
   const key = pricePoint ? String(pricePoint) : String(PRICE_POINTS[0]);
 
@@ -778,28 +778,25 @@ app.post("/admin/add-one", async (req, res) => {
     });
   }
 
-  // If pool is empty, trigger background replenishment and return immediately
-  // This prevents 502 errors from Render's 120s request timeout
-  if (!memoryPool[key] || memoryPool[key].length === 0) {
-    replenishPool(key).catch(console.error);
-    return res.status(202).json({ status: "queued", price: key });
+  const poolSize = memoryPool[key]?.length || 0;
+
+  // If the pool already has exchanges, just report current state.
+  // The handoff expects this endpoint to stay non-blocking.
+  if (poolSize > 0) {
+    return res.json({ status: "ok", pool: poolSize });
   }
 
-  try {
-    const exchange = await createExchangeWithRetry(parseInt(key));
-    memoryPool[key].push({ ...exchange, amount: parseInt(key) });
-    isDirty = true;
-    await syncPoolToDisk();
-
-    res.json({
-      success: true,
-      pricePoint: parseInt(key),
-      poolSize: memoryPool[key].length,
-      exchange,
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+  // If pool is empty, trigger background replenishment and return immediately.
+  // This prevents 502 errors from Render's 120s request timeout.
+  if (!replenishmentLock[key]) {
+    setImmediate(() =>
+      replenishPool(key).catch((error) =>
+        console.error(`❌ [ADMIN] /admin/add-one replenish failed: ${error.message}`),
+      ),
+    );
   }
+
+  return res.status(202).json({ status: "queued", price: key });
 });
 
 app.get("/admin/pool", (req, res) => {
@@ -811,7 +808,7 @@ app.get("/admin/pool", (req, res) => {
     },
     config: POOL_CONFIG,
     stats: stats,
-    serverStartTime: serverStartTime,
+    serverStartTime: stats.serverStartTime,
   });
 });
 
