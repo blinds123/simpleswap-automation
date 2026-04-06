@@ -328,7 +328,16 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
         },
         { timeout: 30000 },
       );
-    } catch (e) {}
+    } catch (e) {
+      console.error(`[EXCHANGE] waitForFunction timeout at line 322 — rate input did not populate. URL: ${page.url()}`);
+      try {
+        await page.screenshot({ path: `/tmp/exchange-rate-timeout-${Date.now()}.png`, timeout: 5000 });
+        console.error(`[EXCHANGE] Screenshot saved for debugging`);
+      } catch (screenshotErr) {
+        console.error(`[EXCHANGE] Could not capture screenshot: ${screenshotErr.message}`);
+      }
+      throw new Error(`waitForFunction timeout waiting for rate input: ${e.message}`);
+    }
 
     const createButton = page.getByRole("button", {
       name: /^create.*exchange$/i,
