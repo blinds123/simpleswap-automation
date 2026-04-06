@@ -76,14 +76,21 @@ if (!STEEL_API_KEY) {
  * URL format: wss://connect.steel.dev?sessionId=XXX&apiKey=YYY
  */
 async function createSteelSession() {
-  const resp = await fetch("https://api.steel.dev/v1/sessions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Steel-Api-Key": STEEL_API_KEY,
-    },
-    body: JSON.stringify({}),
-  });
+  // Timeout wrapper to prevent indefinite hangs
+  const timeoutMs = 30000;
+  const resp = await Promise.race([
+    fetch("https://api.steel.dev/v1/sessions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Steel-Api-Key": STEEL_API_KEY,
+      },
+      body: JSON.stringify({}),
+    }),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Steel session create timeout after ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ]);
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Steel session create failed ${resp.status}: ${text}`);
@@ -282,12 +289,16 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     // Connect to Steel.dev with retry logic and better error handling
     let connected = false;
     const maxConnectRetries = 3;
+    const connectTimeoutMs = 30000;
     for (let connectAttempt = 1; connectAttempt <= maxConnectRetries && !connected; connectAttempt++) {
       try {
         console.log(`🔗 [STEEL] Connect attempt ${connectAttempt}/${maxConnectRetries}...`);
-        // Use browser.connectOverCDP() as per Steel.dev documentation
-        // Note: websocketUrl now includes the API key (fixed in createSteelSession)
-        browser = await chromiumInstance.connectOverCDP(websocketUrl);
+        browser = await Promise.race([
+          chromiumInstance.connectOverCDP(websocketUrl),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`CDP connect timeout after ${connectTimeoutMs}ms`)), connectTimeoutMs)
+          ),
+        ]);
         connected = true;
         console.log(`🔗 [STEEL] Connected successfully!`);
         console.log(`[TIMING] ${Date.now()} - STEP 3: CDP connected`);
@@ -726,6 +737,21 @@ app.post("/admin/fill-sequential", async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+app.post("/admin/release-lock", (req, res) => {
+  const { pricePoint } = req.body;
+  if (!pricePoint) {
+    return res.status(400).json({ success: false, error: "Missing pricePoint" });
+  }
+  const key = String(pricePoint);
+  if (!POOL_CONFIG[key]) {
+    return res.status(400).json({ success: false, error: `Invalid price point. Available: $${PRICE_POINTS.join(", $")}` });
+  }
+  const wasLocked = !!replenishmentLock[key];
+  replenishmentLock[key] = false;
+  console.log(`🔓 [ADMIN] Lock released for $${key} (wasLocked: ${wasLocked})`);
+  res.json({ success: true, pricePoint: parseInt(key), wasLocked, message: wasLocked ? "Lock was stuck, now released" : "Lock was not held" });
 });
 
 app.post("/admin/init-pool", async (req, res) => {

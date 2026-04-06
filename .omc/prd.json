@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "task": "Get SimpleSwap pool server creating exchanges — totalReplenished must increment from 0",
+  "stories": [
+    {
+      "id": "US-01",
+      "description": "Unlock stuck replenishmentLock — add admin endpoint to release locks",
+      "acceptanceCriteria": [
+        "POST /admin/release-lock {pricePoint} sets replenishmentLock[priceKey] = false",
+        "Admin endpoint returns {success: true} and confirms lock released",
+        "After unlocking, /admin/fill-sequential can be called for price 29 without 'Already filling' error"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-02",
+      "description": "Add Steel session timeout to prevent indefinite hangs",
+      "acceptanceCriteria": [
+        "createExchange() aborts with clear error if Steel session creation takes >30s",
+        "createExchange() aborts with clear error if CDP WebSocket connect takes >30s",
+        "Aborted sessions still call browser.close() and releaseSteelSession() in finally block",
+        "Failed attempts properly release locks so health check can retry"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-03",
+      "description": "Verify exchange creation actually succeeds end-to-end",
+      "acceptanceCriteria": [
+        "Calling POST /admin/fill-sequential {pricePoint: 29} results in pool growing from 0 to ≥1",
+        "totalReplenished in /stats increments from 0 to ≥1",
+        "failedReplenishments does NOT increase on the successful run",
+        "A fresh exchange URL appears in /admin/pool for price 29"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-04",
+      "description": "Health check triggers replenishment for empty pools automatically",
+      "acceptanceCriteria": [
+        "Pool at 0 for price 29 gets replenished automatically within 2 health check cycles (2 minutes)",
+        "Health check does not trigger for pools that already have items (no redundant fills)",
+        "replenishmentLock prevents concurrent fills for the same price"
+      ],
+      "passes": false
+    }
+  ]
+}
