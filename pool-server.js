@@ -350,7 +350,9 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     console.log(`[EXCHANGE] Waiting for address input selector...`);
     await page.waitForSelector('[data-testid="wallet-address-input-field"]', { timeout: 30000 });
     console.log(`[TIMING] ${Date.now()} - STEP 4b: Address input selector found`);
-    const addressInput = page.locator('[data-testid="wallet-address-input-field"]');
+    // NOTE: data-testid="wallet-address-input-field" matches 2 inputs (1 hidden, 1 visible).
+    // Must use .last() to fill the VISIBLE input — .fill() on hidden first causes timeout.
+    const addressInput = page.locator('[data-testid="wallet-address-input-field"]').last();
     console.log(`[EXCHANGE] Filling address: ${walletAddress.substring(0, 8)}...`);
     await addressInput.fill(walletAddress, { timeout: 30000 });
     await page.waitForTimeout(2000);
