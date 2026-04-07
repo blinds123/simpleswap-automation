@@ -347,7 +347,19 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     });
 
     // Wait for form to be ready (SPA may not have rendered yet)
+    console.log(`[EXCHANGE] Waiting for address input selector...`);
     await page.waitForSelector('[data-testid="wallet-address-input-field"]', { timeout: 30000 });
+    console.log(`[TIMING] ${Date.now()} - STEP 4b: Address input selector found`);
+    const addressInput = page.locator('[data-testid="wallet-address-input-field"]');
+    console.log(`[EXCHANGE] Filling address: ${walletAddress.substring(0, 8)}...`);
+    await addressInput.fill(walletAddress, { timeout: 30000 });
+    await page.waitForTimeout(2000);
+    await addressInput.press("Enter");
+    console.log(`[TIMING] ${Date.now()} - STEP 5: Address filled + Enter pressed`);
+
+    // Wait a moment for SimpleSwap SPA to process the address
+    await page.waitForTimeout(3000);
+    console.log(`[TIMING] ${Date.now()} - STEP 6: Post-address wait complete`);
     const addressInput = page.locator('[data-testid="wallet-address-input-field"]');
     await addressInput.fill(walletAddress, { timeout: 30000 });
     await page.waitForTimeout(2000);
@@ -359,6 +371,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     await page.waitForTimeout(3000);
 
     // Try clicking "Calculate" or "Get rate" button if it appears
+    console.log(`[EXCHANGE] Looking for calculate/get rate button...`);
     const calcButton = page.locator("button", { hasText: /calculate|get rate|check/i }).first();
     try {
       if (await calcButton.isVisible({ timeout: 5000 })) {
@@ -370,6 +383,7 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
       console.log(`[EXCHANGE] No calculate button found, relying on auto calculation`);
     }
 
+    console.log(`[EXCHANGE] Waiting for rate input to populate (up to 60s)...`);
     try {
       await page.waitForFunction(
         () => {
