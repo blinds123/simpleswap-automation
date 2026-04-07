@@ -402,31 +402,19 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
       throw new Error(`waitForFunction timeout waiting for rate input: ${e.message}`);
     }
 
-    const createButton = page.getByRole("button", {
-      name: /^create.*exchange$/i,
-    });
-    await page.waitForFunction(
-      () => {
-        const buttons = Array.from(document.querySelectorAll("button"));
-        const createBtn = buttons.find((b) =>
-          /^create.*exchange$/i.test(b.textContent?.trim() || ""),
-        );
-        return createBtn && !createBtn.disabled;
-      },
-      { timeout: 40000 },
-    );
-
-    const isDisabled = await createButton.first().isDisabled();
-    if (!isDisabled) {
-      await createButton.first().click({ timeout: 10000 });
-      console.log(`[TIMING] ${Date.now()} - STEP 8: Button clicked`);
-      await page.waitForTimeout(2000);
-      if (page.url().includes("/exchange?")) {
-        await createButton.first().click({ force: true });
-      }
-    } else {
-      throw new Error("Button still disabled");
-    }
+    // Wait for rate to be confirmed, then use Tab/Space to submit the form.
+    // In Steel headless, createButton.click() fails because the button's bounding
+    // rect is 0x0 even though DOM says enabled. Tab+Space triggers React's
+    // synthetic form-submit handler reliably.
+    console.log(`[EXCHANGE] Submitting form via keyboard...`);
+    await page.waitForTimeout(2000);
+    await page.evaluate(() => document.body.focus());
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(1000);
+    await page.keyboard.press("Space");
+    console.log(`[TIMING] ${Date.now()} - STEP 8: Form submitted via Space`);
 
     console.log(`[EXCHANGE] Waiting for exchange URL...`);
     await page.waitForURL(/\/exchange\?id=/, { timeout: 120000 });
