@@ -350,9 +350,12 @@ async function createExchange(amountUSD, walletAddress = MERCHANT_WALLET) {
     console.log(`[EXCHANGE] Waiting for address input selector...`);
     await page.waitForSelector('[data-testid="wallet-address-input-field"]', { timeout: 30000 });
     console.log(`[TIMING] ${Date.now()} - STEP 4b: Address input selector found`);
-    // NOTE: data-testid="wallet-address-input-field" matches 2 inputs (1 hidden, 1 visible).
-    // Must use .last() to fill the VISIBLE input — .fill() on hidden first causes timeout.
-    const addressInput = page.locator('[data-testid="wallet-address-input-field"]').last();
+    // NOTE: data-testid="wallet-address-input-field" matches 2 inputs.
+    // In Steel headless: first() targets the VISIBLE input (idx=0).
+    // In real Chrome: last() targets the VISIBLE input (idx=last).
+    // Using .first() works on Steel headless (where server runs) and
+    // .waitForSelector ensures the DOM is ready before fill.
+    const addressInput = page.locator('[data-testid="wallet-address-input-field"]').first();
     console.log(`[EXCHANGE] Filling address: ${walletAddress.substring(0, 8)}...`);
     await addressInput.fill(walletAddress, { timeout: 30000 });
     await page.waitForTimeout(2000);
